@@ -5,45 +5,110 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clip Studio — personal AI clipping</title>
 <style>
-:root{--bg:#0b0b10;--glass:rgba(255,255,255,.06);--line:rgba(255,255,255,.12);--txt:#f5f3ee;--mut:#a9a6ad;--acc:#ff6a1a;--acc2:#a855f7}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 80% -10%,rgba(168,85,247,.25),transparent),radial-gradient(700px 500px at 0% 0%,rgba(255,106,26,.18),transparent),var(--bg);color:var(--txt);font:16px/1.5 system-ui,Segoe UI,Arial,sans-serif;min-height:100vh}
-a{color:#ffb38a}.wrap{display:flex;min-height:100vh}
-aside{width:230px;padding:20px 14px;border-right:1px solid var(--line);background:rgba(255,255,255,.03);backdrop-filter:blur(14px)}
-.logo{display:flex;gap:10px;align-items:center;font-weight:800;font-size:18px;margin-bottom:24px}
-.logo .tile{width:38px;height:38px;border-radius:10px;background:#111;display:grid;place-items:center;font-size:20px;border:1px solid var(--line)}
-nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--txt);padding:10px 12px;border-radius:10px;cursor:pointer;font-size:15px}
-nav button.on,nav button:hover{background:var(--glass)}
+:root{--bg:#0b0b10;--glass:rgba(255,255,255,.06);--glass2:rgba(255,255,255,.09);--line:rgba(255,255,255,.13);--txt:#f5f3ee;--mut:#b3afb6;--acc:#ff6a1a;--acc2:#a855f7;--gold:#ffc24b;--green:#3ddc84;--red:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0;color:var(--txt);font:16px/1.5 system-ui,Segoe UI,Arial,sans-serif;min-height:100vh;
+background:radial-gradient(1000px 520px at 85% -10%,rgba(168,85,247,.28),transparent),
+radial-gradient(800px 520px at -5% 5%,rgba(255,106,26,.20),transparent),
+radial-gradient(700px 600px at 50% 110%,rgba(255,170,40,.10),transparent),var(--bg)}
+a{color:#ffb38a}
+.wrap{display:flex;min-height:100vh}
+aside{width:240px;padding:20px 14px;border-right:1px solid var(--line);background:rgba(255,255,255,.03);backdrop-filter:blur(16px);position:sticky;top:0;height:100vh}
+.logo{display:flex;gap:12px;align-items:center;font-weight:800;font-size:19px;margin-bottom:26px}
+.logo-img{width:46px;height:46px;object-fit:contain;background:#000;border-radius:12px;border:1px solid var(--line);box-shadow:0 0 20px rgba(168,85,247,.55);flex:none}
+.logo small{display:block;font-size:11px;font-weight:500;color:var(--mut);letter-spacing:.08em;text-transform:uppercase}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--txt);padding:11px 12px;border-radius:12px;cursor:pointer;font-size:15px;margin-bottom:2px}
+nav button.on,nav button:hover{background:var(--glass2)}
+.topbar{display:none;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.03);backdrop-filter:blur(16px);position:sticky;top:0;z-index:5}
+.topbar .logo-img{width:40px;height:40px}
+.topbar b{font-size:17px}
+.topbar .tabs-mini{margin-left:auto;display:flex;gap:6px}
+.topbar .tabs-mini button{background:var(--glass);border:1px solid var(--line);color:var(--txt);border-radius:999px;padding:7px 12px;cursor:pointer;font-size:13px}
 main{flex:1;padding:26px;max-width:1080px}
 .glass{background:var(--glass);border:1px solid var(--line);border-radius:18px;backdrop-filter:blur(14px);padding:20px}
-.hero h1{margin:0 0 6px;font-size:26px}.hero p{color:var(--mut);margin:0 0 16px}
-.paste{display:flex;gap:10px}.paste input{flex:1;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:999px;color:var(--txt);padding:14px 18px;font-size:16px;outline:none}
-.btn{background:linear-gradient(90deg,var(--acc),#ff8a3d);border:0;color:#fff;font-weight:700;border-radius:999px;padding:13px 22px;cursor:pointer;font-size:15px}
-.btn.ghost{background:var(--glass);border:1px solid var(--line);color:var(--txt)}
-.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}.row .btn{padding:10px 16px;font-size:14px}
-.stats{display:flex;gap:14px;margin:18px 0}.stat{flex:1;text-align:center}.stat b{font-size:26px;display:block}.stat span{color:var(--mut);font-size:13px}
+.hero h1{margin:0 0 6px;font-size:27px}
+.hero p{color:var(--mut);margin:0 0 16px}
+.paste{display:flex;gap:10px}
+.paste input{flex:1;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:999px;color:var(--txt);padding:14px 18px;font-size:16px;outline:none}
+.paste input:focus{border-color:var(--acc)}
+.btn{background:linear-gradient(90deg,var(--acc),#ff8a3d);border:0;color:#fff;font-weight:700;border-radius:999px;padding:13px 22px;cursor:pointer;font-size:15px;box-shadow:0 0 22px rgba(255,106,26,.45)}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:var(--glass);border:1px solid var(--line);color:var(--txt);box-shadow:none}
+.btn.small{padding:9px 14px;font-size:13px}
+.btn.danger{background:rgba(255,107,107,.15);border:1px solid rgba(255,107,107,.5);color:#ffb3b3;box-shadow:none}
+.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+.stats{display:flex;gap:14px;margin:18px 0}
+.stat{flex:1;text-align:center}
+.stat b{font-size:27px;display:block}
+.stat span{color:var(--mut);font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.card{cursor:pointer}.card img{width:100%;border-radius:12px;display:block;aspect-ratio:16/9;object-fit:cover;background:#222}
-.card h3{margin:10px 0 4px;font-size:16px}.card p{color:var(--mut);margin:0;font-size:13px}
-.badge{display:inline-block;background:rgba(255,106,26,.2);border:1px solid rgba(255,106,26,.5);border-radius:999px;padding:2px 10px;font-size:12px;margin-right:6px}
+.card{cursor:pointer;transition:transform .15s}
+.card:hover{transform:translateY(-2px)}
+.card img{width:100%;border-radius:12px;display:block;aspect-ratio:16/9;object-fit:cover;background:#222}
+.card h3{margin:10px 0 4px;font-size:16px}
+.card p{color:var(--mut);margin:0;font-size:13px}
+.badge{display:inline-block;background:rgba(255,106,26,.18);border:1px solid rgba(255,106,26,.5);border-radius:999px;padding:2px 10px;font-size:12px;margin:2px 4px 2px 0}
+.badge.green{background:rgba(61,220,132,.15);border-color:rgba(61,220,132,.5)}
+.badge.gold{background:rgba(255,194,75,.15);border-color:rgba(255,194,75,.55);color:var(--gold)}
+.badge.grey{background:rgba(255,255,255,.07);border-color:var(--line)}
+.badge.purple{background:rgba(168,85,247,.16);border-color:rgba(168,85,247,.55);color:#d9b8ff}
 textarea{width:100%;min-height:110px;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:12px;font-size:15px}
-.clip{margin-top:12px}.clip .bar{height:8px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden}.clip .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
-select,input[type=number]{background:rgba(0,0,0,.5);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 10px}
-label{font-size:13px;color:var(--mut);display:block;margin:10px 0 4px}
-.note{color:var(--mut);font-size:13px}.err{color:#ff9a9a}
-@media(max-width:760px){aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}}
+input[type=text],input[type=number]{background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:11px 12px;font-size:15px}
+select{background:rgba(0,0,0,.55);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 10px;font-size:14px}
+label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
+.note{color:var(--mut);font-size:13px}
+.err{color:#ff9a9a}
+.clip{margin-top:14px}
+.clip h3{margin:4px 0 2px;font-size:17px}
+.vbar{height:9px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden;margin:8px 0}
+.vbar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
+.why{background:rgba(255,194,75,.08);border:1px solid rgba(255,194,75,.3);border-radius:12px;padding:10px 12px;font-size:14px;margin:8px 0}
+.caps{background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;padding:10px 12px;max-height:150px;overflow:auto;font-size:14px}
+.caps div{padding:2px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+.caps div:last-child{border-bottom:0}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 4px}
+.tabs button{background:var(--glass);border:1px solid var(--line);color:var(--txt);border-radius:999px;padding:8px 15px;cursor:pointer;font-size:14px}
+.tabs button.on{background:linear-gradient(90deg,var(--acc),#ff8a3d);border-color:transparent;font-weight:700;box-shadow:0 0 16px rgba(255,106,26,.4)}
+.tog{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.tog:last-child{border-bottom:0}
+.tog b{font-size:15px}
+.tog span{display:block;font-size:12px;color:var(--mut)}
+.tog input[type=checkbox]{width:22px;height:22px;accent-color:var(--acc);cursor:pointer;flex:none}
+.sec-h{margin:22px 0 4px;font-size:18px}
+.stage{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.stage span{background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12px}
+.stage span.done{background:rgba(61,220,132,.14);border-color:rgba(61,220,132,.5)}
+.stage span.busy{background:rgba(255,194,75,.14);border-color:rgba(255,194,75,.5)}
+.fixitem{border-bottom:1px solid rgba(255,255,255,.07);padding:12px 0}
+.fixitem:last-child{border-bottom:0}
+.hookvar{display:block;width:100%;text-align:left;background:rgba(0,0,0,.35);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 12px;margin-top:6px;cursor:pointer;font-size:14px}
+.hookvar:hover{border-color:var(--acc)}
+@media(max-width:760px){
+  aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}
+  .topbar{display:flex}.stats{flex-wrap:wrap}
+}
 </style>
 </head>
 <body>
+<div class="topbar">
+  <img class="logo-img" src="/logo.png" alt="Clip Studio logo">
+  <b>Clip Studio</b>
+  <div class="tabs-mini">
+    <button onclick="show('dash')">Dashboard</button>
+    <button onclick="show('recipe')">Recipe</button>
+    <button onclick="show('fix')">Fix</button>
+  </div>
+</div>
 <div class="wrap">
 <aside>
-  <div class="logo"><span class="tile">✂️</span> Clip Studio</div>
+  <div class="logo"><img class="logo-img" src="/logo.png" alt="Clip Studio logo"><span>Clip Studio<small>Personal AI clipping</small></span></div>
   <nav>
-    <button class="on" onclick="show('dash')">Dashboard</button>
-    <button onclick="show('dash')">Projects</button>
-    <button onclick="show('recipe')">Recipe settings</button>
-    <button onclick="show('fix')">Fix requests</button>
+    <button class="on" onclick="show('dash')">📊 Dashboard</button>
+    <button onclick="show('dash')">🎬 Projects</button>
+    <button onclick="show('recipe')">⚙️ Recipe settings</button>
+    <button onclick="show('fix')">🔧 Fix requests <span id="fixCount" class="badge grey"></span></button>
   </nav>
-  <p class="note" style="margin-top:24px">Personal use only.<br>Free tier: server sleeps after 15 min idle — first load takes ~1 min to wake.</p>
+  <p class="note" style="margin-top:24px">Personal use only.<br>Free tier: server sleeps after 15 min idle — first load takes ~1 min to wake.<br><br>Disk is ephemeral — projects live on this server only until it restarts.</p>
 </aside>
 <main>
   <section id="dash">
@@ -71,7 +136,7 @@ label{font-size:13px;color:var(--mut);display:block;margin:10px 0 4px}
       <div class="glass stat"><b id="stC">0</b><span>Clips</span></div>
       <div class="glass stat"><b id="stS">0</b><span>Best score</span></div>
     </div>
-    <div class="row" style="margin-bottom:12px"><input id="q" placeholder="Search projects…" oninput="load()" style="flex:1"></div>
+    <div class="row" style="margin-bottom:12px"><input id="q" type="text" placeholder="Search projects…" oninput="load()" style="flex:1"></div>
     <div id="grid" class="grid"></div>
   </section>
 
@@ -82,51 +147,342 @@ label{font-size:13px;color:var(--mut);display:block;margin:10px 0 4px}
   </section>
 
   <section id="recipe" style="display:none">
-    <div class="glass"><h2>Recipe settings</h2>
-      <label>Caption style</label>
-      <select id="rCap"><option>Word Cut</option><option>Karaoke</option><option>Marker Sweep</option><option>Negative Keywords</option><option>Word Cut Alt</option></select>
-      <label>Auto hook template</label>
-      <select id="rHook"><option>Classic</option><option>Editorial</option><option>Statement</option><option>Sunset</option></select>
-      <label><input type="checkbox" id="rClean" checked> Speech cleanup — remove pauses &amp; filler words</label>
-      <div class="row"><button class="btn" onclick="saveRecipe()">Save recipe</button></div>
-      <p class="note">Caption translation is Bengali ↔ English only. Every toggle is kept for later use — nothing is removed.</p>
+    <div class="glass">
+      <h2 style="margin-top:0">Recipe settings</h2>
+      <p class="note">Everything is kept — nothing is removed. Turn things on when you need them; every change saves automatically.</p>
+      <p class="note" id="recipeSaved"></p>
+      <div id="recipeForm"></div>
     </div>
   </section>
 
   <section id="fix" style="display:none">
-    <div class="glass"><h2>Fix requests</h2><p class="note">Write what to fix in one place — e.g. “akhane thik koro”. (This scaffold stores them locally in a future version; for now, tell Muse in chat.)</p></div>
+    <div class="glass">
+      <h2 style="margin-top:0">Fix requests</h2>
+      <p class="note">Write what to fix or change in one place — e.g. “akhane thik koro”. Requests are saved on the server, so you can ask from anywhere and check back later.</p>
+      <textarea id="fixText" placeholder="What should I fix or change here?"></textarea>
+      <div class="row"><button class="btn" onclick="addFix()">Save fix request</button></div>
+      <div id="fixList" style="margin-top:8px"></div>
+    </div>
   </section>
 </main>
 </div>
 <script>
-let cur=null;
-function show(id){for(const s of ['dash','project','recipe','fix'])document.getElementById(s).style.display=s===id?'block':'none';if(id==='dash')load();}
+let cur=null, curProject=null, curFilter='all', recipe={};
+function show(id){for(const s of ['dash','project','recipe','fix'])document.getElementById(s).style.display=s===id?'block':'none';
+  document.querySelectorAll('nav button').forEach(b=>b.classList.remove('on'));
+  if(id==='dash')load(); if(id==='recipe')loadRecipe(); if(id==='fix')loadFix();}
 async function api(p,m,b){const r=await fetch(p,{method:m||'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;}
-async function load(){const q=document.getElementById('q').value.toLowerCase();const {projects}=await api('/api/projects');const f=projects.filter(p=>(p.title||'').toLowerCase().includes(q));document.getElementById('stP').textContent=projects.length;document.getElementById('stC').textContent=projects.reduce((a,p)=>a+(p.clip_count||0),0);document.getElementById('stS').textContent=Math.max(0,...projects.map(p=>p.top_score||0));document.getElementById('grid').innerHTML=f.map(p=>`<div class="glass card" onclick="openP(${p.id})">${p.thumb_url?`<img src="${p.thumb_url}">`:''}<h3>${esc(p.title)}</h3><p>${esc(p.channel||'')} · ${p.duration_sec?Math.round(p.duration_sec/60)+' min':''} · ${p.clip_count||0} clips</p><p><span class="badge">${p.top_score||0} VIRAL</span><span class="badge">${p.source_type||'youtube'}</span><span class="badge">${esc(p.transcript_status||'')}</span></p></div>`).join('')||'<p class="note">No projects yet — paste a link above.</p>';}
-function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-async function createProject(){const url=document.getElementById('link').value.trim();const m=document.getElementById('msg');try{m.textContent='Working automatically…';const {project}=await api('/api/projects','POST',{url});m.textContent='Project created — transcript is being fetched automatically. Opening it…';setTimeout(()=>openP(project.id),800);}catch(e){m.innerHTML='<span class="err">'+esc(e.message)+'</span>';}}
-function pickUpload(){document.getElementById('file').click();}
-document.getElementById('file').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;if(f.size>15*1024*1024*1024){alert('That file is over the 15 GB maximum upload size.');return;}try{const {project}=await api('/api/projects','POST',{sourceType:'upload',fileName:f.name,fileSizeBytes:f.size});alert('Upload project saved (the video itself stays on your device). Paste a transcript in the project to find clips.');openP(project.id);}catch(err){alert(err.message);}});
-function pickDrive(){document.getElementById('driveBox').style.display='block';document.getElementById('driveLink').focus();}
-async function createDrive(){const driveUrl=document.getElementById('driveLink').value.trim();try{const {project}=await api('/api/projects','POST',{sourceType:'drive',driveUrl});openP(project.id);}catch(e){alert(e.message);}}
-async function openP(id){cur=id;show('project');const {project:p}=await api('/api/projects/'+id);document.getElementById('pHead').innerHTML=`<h2>${esc(p.title)}</h2><p>${esc(p.channel||'')} · ${p.duration_sec?Math.round(p.duration_sec/60)+' min':''} · ${p.clips.length} clips · <span class="badge">${esc(p.fetch_status||'')}</span></p>${p.fetch_error?`<p class="err">${esc(p.fetch_error)}</p>`:''}${p.traffic_json?`<p class="note">Traffic: ${esc(p.traffic_json)}</p>`:''}`;
-document.getElementById('pBody').innerHTML=`
-${p.transcript_status==='needs_paste'?`<label>Paste transcript (backup only — automatic fetch failed)</label><textarea id="tr">${esc(p.transcript||'')}</textarea><div class="row"><button class="btn" onclick="saveTr()">Save transcript</button></div>`:''}
-<label>How many clips? (no limit — pick any number)</label>
-<input type="number" id="cnt" value="5" min="1" max="20">
-<div class="row"><button class="btn" onclick="findClips()">Make my clips</button></div>
-<div id="clips">${p.clips.map(clipHtml).join('')||'<p class="note">No clips yet.</p>'}</div>
-<div class="glass" style="margin-top:12px"><h3>+ Add clip by hand</h3><label>Start (seconds)</label><input type="number" id="ms" value="0"><label>End (seconds)</label><input type="number" id="me" value="30"><div class="row"><button class="btn ghost" onclick="addClip()">Add clip</button></div></div>`;
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function fmtTime(s){s=Math.max(0,Math.round(s||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function grade(score){score=+score||0;if(score>=90)return'A+';if(score>=80)return'A';if(score>=70)return'B+';if(score>=60)return'B';if(score>=50)return'C';return'D';}
+function gradeBadge(score){const g=grade(score);const cls=score>=80?'gold':score>=60?'purple':'grey';return `<span class="badge ${cls}">${g}</span>`;}
+function whyWorks(c){
+  const reasons=[];
+  const hook=(c.hook||'').toLowerCase();
+  if((+c.score||0)>=85)reasons.push('very strong hook — it stops the scroll in the first 2 seconds');
+  else if((+c.score||0)>=70)reasons.push('strong hook for the first 2 seconds');
+  else reasons.push('a clear moment from the video');
+  if(/\d/.test(hook))reasons.push('a concrete number makes it feel real');
+  if(hook.includes('?'))reasons.push('a question pulls the viewer in');
+  if(/(never|secret|mistake|stop|truth|warning|nobody|keno|kivabe|sotti)/.test(hook))reasons.push('a curiosity word keeps people watching');
+  const dur=(+c.end_sec||0)-(+c.start_sec||0);
+  if(dur>=15&&dur<=60)reasons.push('perfect Shorts length ('+Math.round(dur)+'s)');
+  return reasons.join(' · ')+'.';
 }
-function clipHtml(c){return `<div class="glass clip"><b>${c.score} VIRAL</b> · ${c.start_sec}s → ${c.end_sec}s · ${esc(c.status||'new')}<p>${esc(c.hook||'')}</p><div class="bar"><i style="width:${c.score||0}%"></i></div><div class="row"><select onchange="setClip(${c.id},'layout',this.value)"><option ${c.layout==='full'?'selected':''}>full</option><option ${c.layout==='split'?'selected':''}>split</option><option ${c.layout==='spotlight'?'selected':''}>spotlight</option></select><select onchange="setClip(${c.id},'resolution',this.value)"><option ${c.resolution==='720p'?'selected':''}>720p</option><option ${c.resolution==='1080p'?'selected':''}>1080p</option></select><button class="btn" onclick="renderClip(${c.id})">Cut this clip</button>${c.video_file?`<a class="btn ghost" href="/renders/${c.video_file}" download>Download MP4</a>`:''}<button class="btn ghost" onclick="translateClip(${c.id})">Translate BN↔EN</button></div><p class="note">Render: ${esc(c.render_status||'idle')}${c.translated_lang?` · Translated: ${c.translated_lang.toUpperCase()}`:''}</p></div>`;}
+
+/* ---------- Dashboard ---------- */
+async function load(){
+  const q=document.getElementById('q').value.toLowerCase();
+  const {projects}=await api('/api/projects');
+  const f=projects.filter(p=>(p.title||'').toLowerCase().includes(q)||(p.channel||'').toLowerCase().includes(q));
+  document.getElementById('stP').textContent=projects.length;
+  document.getElementById('stC').textContent=projects.reduce((a,p)=>a+(p.clip_count||0),0);
+  document.getElementById('stS').textContent=Math.max(0,...projects.map(p=>p.top_score||0));
+  document.getElementById('grid').innerHTML=f.map(p=>`<div class="glass card" onclick="openP(${p.id})">
+    ${p.thumb_url?`<img src="${p.thumb_url}" alt="">`:''}
+    <h3>${esc(p.title)}</h3>
+    <p>${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clip_count||0} clips</p>
+    <p><span class="badge gold">${p.top_score||0} VIRAL</span>${p.top_score?gradeBadge(p.top_score):''}<span class="badge">${p.source_type==='drive'?'Google Drive':p.source_type==='upload'?'Uploaded file':'YouTube'}</span><span class="badge grey">${esc(p.transcript_status||'')}</span></p>
+  </div>`).join('')||'<p class="note">No projects yet — paste a link above.</p>';
+}
+async function createProject(){
+  const url=document.getElementById('link').value.trim();
+  const m=document.getElementById('msg');
+  if(!url){m.innerHTML='<span class="err">Paste a YouTube link first.</span>';return;}
+  try{m.textContent='Working automatically…';const {project}=await api('/api/projects','POST',{url});
+    m.textContent='Project created — transcript is being fetched automatically. Opening it…';
+    setTimeout(()=>openP(project.id),800);
+  }catch(e){m.innerHTML='<span class="err">'+esc(e.message)+'</span>';}
+}
+function pickUpload(){document.getElementById('file').click();}
+document.getElementById('file').addEventListener('change',async e=>{
+  const f=e.target.files[0];if(!f)return;
+  if(f.size>15*1024*1024*1024){alert('That file is over the 15 GB maximum upload size.');return;}
+  try{const {project}=await api('/api/projects','POST',{sourceType:'upload',fileName:f.name,fileSizeBytes:f.size});
+    alert('Upload project saved (the video itself stays on your device). Paste a transcript in the project to find clips.');
+    openP(project.id);
+  }catch(err){alert(err.message);}
+});
+function pickDrive(){document.getElementById('driveBox').style.display='block';document.getElementById('driveLink').focus();}
+async function createDrive(){
+  const driveUrl=document.getElementById('driveLink').value.trim();
+  try{const {project}=await api('/api/projects','POST',{sourceType:'drive',driveUrl});openP(project.id);}
+  catch(e){alert(e.message);}
+}
+
+/* ---------- Project view ---------- */
+function trafficHtml(p){
+  let t=null;try{t=JSON.parse(p.traffic_json||'null');}catch{}
+  if(!t)return '';
+  const peaks=(t.peaks||[]).filter(x=>x>0);
+  if(peaks.length)return `<p class="note">🔥 Most-replayed moments: ${peaks.map(x=>fmtTime(x)).join(' · ')} — these peaks boost clip scores.</p>`;
+  return `<p class="note">Views: ${t.viewCount??'—'} · Likes: ${t.likeCount??'—'} · No most-replayed data published for this video — moments picked from the transcript only.</p>`;
+}
+function stageHtml(p){
+  const fs=p.fetch_status||'pending';
+  const stages=[
+    ['Video detected',true],
+    ['Transcript fetched',p.transcript_status==='ready'],
+    ['Viewer traffic analysed',fs==='ready'||fs==='failed'],
+    ['Best moments scored',(p.clips||[]).length>0],
+    ['Top clips cut',(p.clips||[]).some(c=>c.render_status==='ready')],
+  ];
+  return `<div class="stage">${stages.map(([label,done])=>`<span class="${done?'done':(label==='Transcript fetched'&&fs==='fetching'?'busy':'')}">${done?'✓ ':''}${label}</span>`).join('')}</div>`;
+}
+async function openP(id){
+  cur=id;show('project');
+  const {project:p}=await api('/api/projects/'+id);
+  curProject=p;
+  const src=p.source_type==='drive'
+    ? (p.drive_file_id?`https://drive.google.com/file/d/${p.drive_file_id}/view`:(p.source_url||'#'))
+    : (p.source_url||'#');
+  document.getElementById('pHead').innerHTML=`
+    <h2 style="margin:0 0 4px">${esc(p.title)}</h2>
+    <p class="note">${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clips.length} clips · ${p.source_type==='drive'?'Google Drive':p.source_type==='upload'?'Uploaded file':'YouTube'}</p>
+    ${p.fetch_error?`<p class="err">${esc(p.fetch_error)}</p>`:''}
+    ${stageHtml(p)}${trafficHtml(p)}
+    <div class="row"><a class="btn ghost small" href="${esc(src)}" target="_blank" rel="noopener">↗ Open source</a>
+    <button class="btn ghost small" onclick="exportPack()">⬇ Export clip pack</button>
+    <button class="btn danger small" onclick="deleteProject()">Delete project</button></div>`;
+  document.getElementById('pBody').innerHTML=`
+    ${p.transcript_status==='needs_paste'?`<label>Paste transcript (backup only — automatic fetch failed)</label><textarea id="tr">${esc(p.transcript||'')}</textarea><div class="row"><button class="btn" onclick="saveTr()">Save transcript</button></div>`:''}
+    <label>How many clips do you want? (1, 2, or any number — no limit)</label>
+    <input type="number" id="cnt" value="5" min="1" max="20" style="width:110px">
+    <div class="row"><button class="btn" onclick="findClips()">Make my clips</button></div>
+    <div class="tabs">
+      ${[['all','All'],['top','Top 80+'],['mp4','MP4 ready'],['needscut','Needs cut'],['posted','Posted']].map(([k,l])=>`<button class="${curFilter===k?'on':''}" onclick="setFilter('${k}')">${l}</button>`).join('')}
+    </div>
+    <div id="clips">${filteredClips(p).map(clipHtml).join('')||'<p class="note">No clips yet — hit “Make my clips” above.</p>'}</div>
+    <div class="glass" style="margin-top:14px"><h3 style="margin-top:0">+ Add clip by hand</h3>
+      <label>Start (seconds)</label><input type="number" id="ms" value="0" style="width:110px">
+      <label>End (seconds)</label><input type="number" id="me" value="30" style="width:110px">
+      <div class="row"><button class="btn ghost" onclick="addClip()">Add clip</button></div></div>`;
+}
+function filteredClips(p){
+  const clips=p.clips||[];
+  if(curFilter==='top')return clips.filter(c=>(+c.score||0)>=80);
+  if(curFilter==='mp4')return clips.filter(c=>c.render_status==='ready');
+  if(curFilter==='needscut')return clips.filter(c=>c.render_status!=='ready');
+  if(curFilter==='posted')return clips.filter(c=>c.status==='posted');
+  return clips;
+}
+function setFilter(f){curFilter=f;if(cur)openP(cur);}
+function clipHtml(c){
+  const caps=JSON.parse(c.captions_json||'[]');
+  const tCaps=c.translated_captions_json?JSON.parse(c.translated_captions_json):null;
+  const dur=Math.round((+c.end_sec||0)-(+c.start_sec||0));
+  return `<div class="glass clip" id="clip-${c.id}">
+    <div class="row" style="margin-top:0">
+      <span class="badge gold">${c.score||0} VIRAL</span>${gradeBadge(c.score)}
+      <span class="badge grey">${fmtTime(c.start_sec)} → ${fmtTime(c.end_sec)} · ${dur}s</span>
+      <span class="badge ${c.render_status==='ready'?'green':'grey'}">${c.render_status==='ready'?'✓ MP4 ready':(c.render_status||'idle')}</span>
+      <span class="badge purple">${esc(c.status||'new')}</span>
+      ${c.translated_lang?`<span class="badge">${c.translated_lang.toUpperCase()} translation</span>`:''}
+    </div>
+    <h3>🎯 ${esc(c.hook||'')}</h3>
+    <div class="vbar"><i style="width:${Math.min(100,+c.score||0)}%"></i></div>
+    <div class="why"><b>Why this moment works:</b> ${esc(whyWorks(c))}</div>
+    <label style="margin-top:6px">Captions${tCaps?' (translated)':''}</label>
+    <div class="caps" id="caps-${c.id}">${(tCaps||caps).map(x=>`<div>${esc(x)}</div>`).join('')||'<div class="note">No captions.</div>'}</div>
+    <p class="note">${esc(c.hashtags||'')}</p>
+    <div id="edit-${c.id}"></div>
+    <div class="row">
+      <select onchange="setClip(${c.id},'layout',this.value)" title="Reframe layout">
+        <option value="full" ${c.layout==='full'?'selected':''}>Full frame</option>
+        <option value="split" ${c.layout==='split'?'selected':''}>Split</option>
+        <option value="spotlight" ${c.layout==='spotlight'?'selected':''}>Spotlight</option>
+      </select>
+      <select onchange="setClip(${c.id},'resolution',this.value)" title="Export size">
+        <option value="720p" ${c.resolution==='720p'?'selected':''}>720p</option>
+        <option value="1080p" ${c.resolution==='1080p'?'selected':''}>1080p</option>
+      </select>
+      <button class="btn small" onclick="renderClip(${c.id})">✂️ Cut this clip</button>
+      ${c.video_file?`<a class="btn ghost small" href="/renders/${c.video_file}" download>⬇ Download MP4</a>`:`<span class="note">Not cut yet</span>`}
+      <button class="btn ghost small" onclick="translateClip(${c.id})">🌐 Translate BN↔EN</button>
+    </div>
+    <div class="row">
+      <span class="note">Status:</span>
+      ${['new','ready','posted'].map(s=>`<button class="btn ${c.status===s?'':'ghost'} small" onclick="setClip(${c.id},'status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}
+      <button class="btn ghost small" onclick="editClip(${c.id})">✏️ Edit</button>
+      <button class="btn ghost small" onclick="newHooks(${c.id})">💡 New hooks</button>
+      <button class="btn ghost small" onclick="copyText(${c.id})">📋 Copy text</button>
+      <button class="btn danger small" onclick="deleteClip(${c.id})">🗑 Delete</button>
+    </div>
+    <div id="hooks-${c.id}"></div>
+  </div>`;
+}
 async function saveTr(){await api('/api/projects/'+cur+'/transcript','POST',{transcript:document.getElementById('tr').value});openP(cur);}
-async function findClips(){const count=+document.getElementById('cnt').value||5;const r=await api('/api/projects/'+cur+'/find-clips','POST',{count});alert('Found '+r.created.length+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');openP(cur);}
-async function addClip(){await api('/api/projects/'+cur+'/clips','POST',{start_sec:+document.getElementById('ms').value,end_sec:+document.getElementById('me').value,hook:'Added manually.'});openP(cur);}
-async function setClip(id,f,v){await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{[f]:v});}
-async function renderClip(id){await api('/api/projects/'+cur+'/clips/'+id+'/render','POST',{});alert('Cutting your clip… refresh the project in a minute to see it.');setTimeout(()=>openP(cur),15000);}
-async function translateClip(id){try{await api('/api/projects/'+cur+'/clips/'+id+'/translate','POST',{});openP(cur);}catch(e){alert(e.message);}}
-async function saveRecipe(){await api('/api/recipe','POST',{captions:document.getElementById('rCap').value,autoHook:document.getElementById('rHook').value,speechCleanup:document.getElementById('rClean').checked});alert('Recipe saved.');}
-load();
+async function findClips(){
+  const count=+document.getElementById('cnt').value||5;
+  try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count});
+    alert('Found '+r.created.length+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');
+  }catch(e){alert(e.message);}
+  openP(cur);
+}
+async function addClip(){
+  try{await api('/api/projects/'+cur+'/clips','POST',{start_sec:+document.getElementById('ms').value,end_sec:+document.getElementById('me').value,hook:'Added manually.'});}
+  catch(e){alert(e.message);} openP(cur);
+}
+async function setClip(id,f,v){await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{[f]:v});if(f==='status')openP(cur);}
+async function renderClip(id){
+  try{await api('/api/projects/'+cur+'/clips/'+id+'/render','POST',{});alert('Cutting your clip… it takes about a minute. The card will show MP4 ready when done.');}
+  catch(e){alert(e.message);} setTimeout(()=>openP(cur),20000);
+}
+async function translateClip(id){
+  try{const r=await api('/api/projects/'+cur+'/clips/'+id+'/translate','POST',{});alert('Translated to '+(r.lang==='en'?'English':'Bengali')+'. Cut the clip to burn the translation in.');}
+  catch(e){alert(e.message);} openP(cur);
+}
+function editClip(id){
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(!c)return;
+  const caps=JSON.parse(c.captions_json||'[]');
+  document.getElementById('edit-'+id).innerHTML=`
+    <label>Hook</label><input type="text" id="eh-${id}" value="${esc(c.hook||'')}" style="width:100%">
+    <label>Captions (one per line)</label><textarea id="ec-${id}">${esc(caps.join('\n'))}</textarea>
+    <label>Hashtags</label><input type="text" id="et-${id}" value="${esc(c.hashtags||'')}" style="width:100%">
+    <div class="row"><button class="btn small" onclick="saveEdit(${id})">Save</button>
+    <button class="btn ghost small" onclick="openP(${cur})">Cancel</button></div>`;
+}
+async function saveEdit(id){
+  const hook=document.getElementById('eh-'+id).value;
+  const captions=document.getElementById('ec-'+id).value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const hashtags=document.getElementById('et-'+id).value;
+  await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{hook,captions,hashtags});
+  openP(cur);
+}
+async function newHooks(id){
+  const box=document.getElementById('hooks-'+id);
+  box.innerHTML='<p class="note">Making fresh hooks…</p>';
+  try{
+    const {hooks}=await api('/api/projects/'+cur+'/clips/'+id+'/hooks','POST',{});
+    box.innerHTML='<label>Fresh hooks — tap one to use it:</label>'+hooks.map(h=>`<button class="hookvar" onclick="useHook(${id},this.textContent)">${esc(h)}</button>`).join('');
+  }catch(e){box.innerHTML='<p class="err">'+esc(e.message)+'</p>';}
+}
+async function useHook(id,text){
+  await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{hook:text.trim()});
+  openP(cur);
+}
+async function copyText(id){
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(!c)return;
+  const caps=JSON.parse(c.captions_json||'[]');
+  const text=[c.hook,'',...caps,'',c.hashtags||''].join('\n');
+  try{await navigator.clipboard.writeText(text);alert('Copied — hook, captions and hashtags.');}
+  catch{const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();alert('Copied.');}
+}
+async function deleteClip(id){
+  if(!confirm('Delete this clip?'))return;
+  await api('/api/projects/'+cur+'/clips/'+id,'DELETE');openP(cur);
+}
+async function deleteProject(){
+  if(!confirm('Delete this whole project and its clips?'))return;
+  await api('/api/projects/'+cur,'DELETE');cur=null;show('dash');
+}
+async function exportPack(){
+  try{
+    const pack=await api('/api/projects/'+cur+'/pack');
+    const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='clip-pack-project-'+cur+'.json';a.click();
+    alert('Clip pack downloaded — each clip lists its layout, export size and stored translation.');
+  }catch(e){alert(e.message);}
+}
+
+/* ---------- Recipe (full — nothing removed) ---------- */
+const RECIPE_FIELDS=[
+  {k:'recipe',t:'Recipe',d:'What kind of clipping',type:'select',opts:['Clip long video','Clip podcast','Clip gameplay','Clip interview']},
+  {k:'brandKit',t:'Brand kit',d:'Your brand colours / logo pack',type:'select',opts:['No brand kit','Default brand kit']},
+  {k:'clipping',t:'Clipping',d:'Let the AI pick the best moments',type:'toggle'},
+  {k:'aiPicks',t:'AI picks',d:'How the AI chooses moments',type:'select',opts:['Auto','Manual']},
+  {k:'clipLength',t:'Clip length',d:'How long each clip should be',type:'select',opts:[['auto','Auto (0–3m)'],['short','Short (15–60s)'],['15','15 seconds'],['30','30 seconds'],['60','60 seconds']]},
+  {k:'captions',t:'Captions',d:'Burned-in word captions on every clip',type:'toggle'},
+  {k:'captionStyle',t:'Caption style',d:'How captions look',type:'select',opts:['Word Cut','Word Cut Alt','Marker Sweep','Negative Keywords','Karaoke']},
+  {k:'autoHook',t:'Auto hook',d:'AI writes a scroll-stopping hook',type:'toggle'},
+  {k:'hookTemplate',t:'Headline style',d:'Auto hook template',type:'select',opts:['Classic','Editorial','Statement','Sunset']},
+  {k:'motionGraphics',t:'Motion graphics',d:'Animated graphic overlays (Beta)',type:'toggle'},
+  {k:'aiEmojis',t:'AI Emojis',d:'Emojis matched to the words',type:'toggle'},
+  {k:'autoBroll',t:'Auto B-roll',d:'AI images over slow moments',type:'toggle'},
+  {k:'speechCleanup',t:'Speech cleanup',d:'Remove pauses & filler words',type:'toggle'},
+  {k:'enhanceAudio',t:'Enhance audio',d:'Cleaner, louder voice',type:'toggle'},
+  {k:'autoSfx',t:'Auto SFX',d:'Sound effects on key moments',type:'toggle'},
+  {k:'autoZoom',t:'Auto Zoom',d:'Slow zoom into the action',type:'toggle'},
+  {k:'autoTransitions',t:'Auto transitions',d:'Smooth cuts between scenes',type:'toggle'},
+  {k:'autoColor',t:'Auto Color Correction',d:'Balanced colours on every clip',type:'toggle'},
+  {k:'eyeContact',t:'Eye Contact Correction',d:'For talking-head videos only',type:'toggle'},
+  {k:'voiceDubbing',t:'Voice dubbing',d:'Dub clips in another voice (uses credits)',type:'toggle'},
+  {k:'captionTranslation',t:'Caption translation',d:'Translate captions — Bengali ↔ English only',type:'toggle'},
+];
+async function loadRecipe(){
+  const {settings}=await api('/api/recipe');recipe=settings;
+  document.getElementById('recipeForm').innerHTML=RECIPE_FIELDS.map(f=>{
+    if(f.type==='toggle')return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><input type="checkbox" data-k="${f.k}" ${recipe[f.k]?'checked':''} onchange="saveRecipeField('${f.k}',this.checked)"></div>`;
+    const opts=f.opts.map(o=>{const [v,l]=Array.isArray(o)?o:[o,o];return `<option value="${v}" ${recipe[f.k]===v?'selected':''}>${l}</option>`;}).join('');
+    return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><select data-k="${f.k}" onchange="saveRecipeField('${f.k}',this.value)">${opts}</select></div>`;
+  }).join('')+`<p class="note" style="margin-top:14px">Recommended ON by default: Captions (Word Cut), Auto hook (Classic), Speech cleanup. Everything else is OFF but kept here for later.</p>`;
+}
+async function saveRecipeField(k,v){
+  recipe[k]=v;
+  await api('/api/recipe','POST',recipe);
+  document.getElementById('recipeSaved').textContent='Saved ✓ '+new Date().toLocaleTimeString();
+}
+
+/* ---------- Fix requests (server-stored) ---------- */
+async function loadFix(){
+  const {requests}=await api('/api/fix-requests');
+  document.getElementById('fixCount').textContent=requests.length||'';
+  document.getElementById('fixList').innerHTML=requests.map(r=>`<div class="fixitem">
+    <div id="fixt-${r.id}">${esc(r.text)}</div>
+    <p class="note">#${r.id} · ${esc(r.created_at||'')}</p>
+    <div class="row">
+      <select onchange="setFixStatus(${r.id},this.value)">
+        ${['new','working','done'].map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}
+      </select>
+      <button class="btn ghost small" onclick="editFix(${r.id})">Edit</button>
+      <button class="btn danger small" onclick="delFix(${r.id})">Delete</button>
+    </div></div>`).join('')||'<p class="note">No fix requests yet.</p>';
+}
+async function addFix(){
+  const text=document.getElementById('fixText').value.trim();
+  if(!text){alert('Write what to fix first.');return;}
+  await api('/api/fix-requests','POST',{text});
+  document.getElementById('fixText').value='';
+  loadFix();
+}
+async function setFixStatus(id,status){await api('/api/fix-requests/'+id,'PATCH',{status});loadFix();}
+async function editFix(id){
+  const el=document.getElementById('fixt-'+id);
+  const cur=el.textContent;
+  el.innerHTML=`<textarea id="fixe-${id}" style="min-height:70px">${esc(cur)}</textarea><div class="row"><button class="btn small" onclick="saveFix(${id})">Save</button></div>`;
+}
+async function saveFix(id){
+  const text=document.getElementById('fixe-'+id).value.trim();
+  if(!text)return;
+  await api('/api/fix-requests/'+id,'PATCH',{text});
+  loadFix();
+}
+async function delFix(id){
+  if(!confirm('Delete this fix request?'))return;
+  await api('/api/fix-requests/'+id,'DELETE');loadFix();
+}
+load();loadFix();
 </script>
 </body>
 </html>
