@@ -72,11 +72,17 @@ addColumn('clips', 'caption_offset', 'REAL DEFAULT 0');
 addColumn('clips', 'caption_template', "TEXT DEFAULT 'word-cut'");
 addColumn('clips', 'captions_timed_json', 'TEXT');
 addColumn('clips', 'live_clip', 'INTEGER DEFAULT 0');
+addColumn('clips', 'render_error', 'TEXT');
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/renders', express.static(RENDER_DIR));
+
+// YouTube's bot-wall blocks datacentre IPs on the default web client.
+// The Android player client uses a different API path and usually still
+// works from a server, so every yt-dlp call uses it.
+const YT_CLIENT = ['--extractor-args', 'youtube:player_client=android'];
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve) => {
@@ -213,7 +219,7 @@ function templatePreviewCss(t) {
 
 // ---- YouTube metadata + captions via yt-dlp (server-side, no paste needed) ----
 async function fetchYouTube(url) {
-  const meta = await run('yt-dlp', ['-j', '--no-playlist', url], { timeout: 60000 });
+  const meta = await run('yt-dlp', [...YT_CLIENT, '-j', '--no-playlist', url], { timeout: 60000 });
   if (meta.code !== 0) throw new Error('yt-dlp could not read this video (it may be private, age-restricted or blocking downloads).');
   let info = {};
   try { info = JSON.parse(meta.out); } catch { throw new Error('Could not parse video info from yt-dlp.'); }
@@ -221,7 +227,7 @@ async function fetchYouTube(url) {
   // Auto captions (and manual subs if present), English + Bengali preferred.
   const id = info.id || youtubeId(url) || crypto.randomUUID().slice(0, 8);
   const subOut = path.join(SUB_DIR, id);
-  await run('yt-dlp', ['--skip-download', '--write-auto-subs', '--write-subs',
+  await run('yt-dlp', [...YT_CLIENT, '--skip-download', '--write-auto-subs', '--write-subs',
     '--sub-format', 'vtt', '--sub-lang', 'en,bn.*', '-o', subOut, url], { timeout: 120000 });
 
   let cues = [];
@@ -556,7 +562,7 @@ async function finishRender(srcPath, project, clip, recipe) {
 
 async function renderClipJob(project, clip) {
   const srcBase = path.join(RENDER_DIR, `src-${clip.id}`);
-  const dl = await run('yt-dlp', ['-f', 'bestvideo[height<=720]+bestaudio/best/best',
+  const dl = await run('yt-dlp', [...YT_CLIENT, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
     '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
     '-o', srcBase + '.%(ext)s', project.source_url], { timeout: 300000 });
   // yt-dlp names the file by actual container (.webm/.mp4/.mkv) — find it.
@@ -574,7 +580,7 @@ async function renderClipJob(project, clip) {
 async function renderLiveClipJob(project, clip) {
   // Live stream: record from the start of the stream and cut the range.
   const srcBase = path.join(RENDER_DIR, `live-${clip.id}`);
-  const dl = await run('yt-dlp', ['-f', 'bestvideo[height<=720]+bestaudio/best/best',
+  const dl = await run('yt-dlp', [...YT_CLIENT, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
     '--live-from-start', '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
     '-o', srcBase + '.%(ext)s', project.source_url], { timeout: 600000 });
   const srcPath = fs.readdirSync(RENDER_DIR)
@@ -773,14 +779,27 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
   if (p.source_type !== 'youtube')
     return res.status(400).json({ error: 'Auto-cut works from YouTube only — Drive and uploaded videos preview in their own app instead.' });
   if (c.render_status === 'rendering') return res.json({ clip: c, note: 'Already cutting.' });
-  db.prepare(`UPDATE clips SET render_status='rendering' WHERE id=?`).run(c.id);
+  db.prepare(`UPDATE clips SET render_status='rendering', render_error=NULL WHERE id=?`).run(c.id);
   renderClipJob(p, c).then((info) => {
     db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(info.file, c.id);
   }).catch((e) => {
-    db.prepare(`UPDATE clips SET render_status='failed' WHERE id=?`).run(c.id);
+    db.prepare(`UPDATE clips SET render_status='failed', render_error=? WHERE id=?`).run(String(e.message || e).slice(0, 500), c.id);
     console.error('render failed', e.message);
   });
   res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(c.id) });
+});
+
+// Rename a project / fix its channel (used when the YouTube fetch is blocked
+// and the title would otherwise stay as "YouTube video").
+app.patch('/api/projects/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found.' });
+  const sets = [], vals = [];
+  if (req.body?.title !== undefined) { sets.push('title=?'); vals.push(String(req.body.title).slice(0, 200)); }
+  if (req.body?.channel !== undefined) { sets.push('channel=?'); vals.push(String(req.body.channel).slice(0, 200)); }
+  if (!sets.length) return res.json({ project: p });
+  db.prepare(`UPDATE projects SET ${sets.join(',')} WHERE id=?`).run(...vals, p.id);
+  res.json({ project: db.prepare('SELECT * FROM projects WHERE id=?').get(p.id) });
 });
 
 // ---- Live-stream clipping ----
@@ -800,11 +819,11 @@ app.post('/api/projects/:id/live-clip', async (req, res) => {
   const r = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags, live_clip) VALUES (?,?,?,?,?,'[]','',1)`)
     .run(p.id, start_sec, end_sec, 0, hook || 'Clipped from live.');
   const clip = db.prepare('SELECT * FROM clips WHERE id=?').get(r.lastInsertRowid);
-  db.prepare(`UPDATE clips SET render_status='rendering' WHERE id=?`).run(clip.id);
+  db.prepare(`UPDATE clips SET render_status='rendering', render_error=NULL WHERE id=?`).run(clip.id);
   renderLiveClipJob(p, clip).then((info) => {
     db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(info.file, clip.id);
   }).catch((e) => {
-    db.prepare(`UPDATE clips SET render_status='failed' WHERE id=?`).run(clip.id);
+    db.prepare(`UPDATE clips SET render_status='failed', render_error=? WHERE id=?`).run(String(e.message || e).slice(0, 500), clip.id);
     console.error('live render failed', e.message);
   });
   res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(clip.id), note: 'Recording the live stream from its start and cutting your range — this takes a few minutes.' });
