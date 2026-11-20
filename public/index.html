@@ -113,6 +113,24 @@ details.clip-details[open ] summary::before{content:'▾ '}
 .checklist label{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--txt);margin:0;cursor:pointer}
 .checklist input[type=checkbox]{width:19px;height:19px;accent-color:var(--acc);cursor:pointer;flex:none}
 .readypost{display:inline-block;background:rgba(61,220,132,.15);border:1px solid rgba(61,220,132,.5);border-radius:999px;padding:2px 10px;font-size:12px;margin:2px 4px 2px 0;color:#8ff0b3}
+/* Opus-style single-page create flow */
+.create-wrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+.summary{position:sticky;top:16px}
+.summary .big{width:100%;padding:16px;font-size:17px;margin-top:12px}
+.summary .big:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.duo .glass{padding:16px}
+.duo h3{margin:0 0 6px;font-size:16px}
+.sumrow{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:14px}
+.sumrow:last-child{border-bottom:0}
+.sumrow span{color:var(--mut)}
+.sumrow b{text-align:right}
+.carousel{display:flex;gap:10px;overflow-x:auto;padding:6px 0 10px}
+.carousel .tpl{flex:none;width:168px}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+@media(max-width:900px){
+  .create-wrap{grid-template-columns:1fr}.summary{position:static}.duo{grid-template-columns:1fr}
+}
 @media(max-width:760px){
   aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}
   .topbar{display:flex}.stats{flex-wrap:wrap}
@@ -124,7 +142,9 @@ details.clip-details[open ] summary::before{content:'▾ '}
   <img class="logo-img" src="/logo.png" alt="Clip Studio logo">
   <b>Clip Studio</b>
   <div class="tabs-mini">
+    <span id="creditBal" class="badge gold"></span>
     <button onclick="show('dash')">Dashboard</button>
+    <button onclick="show('credits')">Credits</button>
     <button onclick="show('recipe')">Recipe</button>
     <button onclick="show('fix')">Fix</button>
   </div>
@@ -135,6 +155,7 @@ details.clip-details[open ] summary::before{content:'▾ '}
   <nav>
     <button class="on" onclick="show('dash')">📊 Dashboard</button>
     <button onclick="show('dash')">🎬 Projects</button>
+    <button onclick="show('credits')">💳 Credits <span id="creditBalSide" class="badge gold"></span></button>
     <button onclick="show('recipe')">⚙️ Recipe settings</button>
     <button onclick="show('fix')">🔧 Fix requests <span id="fixCount" class="badge grey"></span></button>
   </nav>
@@ -142,24 +163,40 @@ details.clip-details[open ] summary::before{content:'▾ '}
 </aside>
 <main>
   <section id="dash">
-    <div class="glass hero">
-      <h1>Make Shorts from long videos</h1>
-      <p>Paste a YouTube, Twitch or Kick link — the app detects the video, fetches the transcript itself, analyses viewer traffic and cuts the best clips. No transcript paste needed.</p>
-      <div class="paste">
-        <input id="link" placeholder="Drop a YouTube, Twitch or Kick link" autocomplete="off">
-        <button class="btn" onclick="createProject()">Create project</button>
+    <div class="create-wrap">
+      <div>
+        <div class="glass hero">
+          <h1>Make Shorts from long videos</h1>
+          <p>Drop your video here or choose a way to upload — set everything in one place, press Create, and your clips come out ready.</p>
+          <div class="paste">
+            <input id="link" placeholder="Drop a YouTube, Twitch or Kick link" autocomplete="off" oninput="updateCreateBtn()">
+            <button class="btn" id="createBtnTop" onclick="createProject()" disabled>Create project</button>
+          </div>
+          <div class="row">
+            <button class="btn ghost" onclick="pickUpload()">⬆️ Upload <span class="note">(max 15 GB)</span></button>
+            <button class="btn ghost" onclick="pickDrive()">▽ Google Drive</button>
+            <input type="file" id="file" accept="video/*" hidden>
+          </div>
+          <div id="driveBox" style="display:none;margin-top:12px">
+            <input id="driveLink" placeholder="Paste a Google Drive share link" style="width:100%;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:12px">
+            <div class="row"><button class="btn" onclick="createDrive()">Add Drive video</button></div>
+            <p class="note">Set the file to “Anyone with the link can view”.</p>
+          </div>
+          <p id="msg" class="note"></p>
+        </div>
+        <div class="duo">
+          <div class="glass" id="recipeCard"></div>
+          <div class="glass" id="brandCard"></div>
+        </div>
+        <p class="note" style="margin:14px 2px 0">Your Recipe sets which edits run. Your brand kit sets the look, like your logo, intro, outro and caption style.</p>
+        <div class="glass" style="margin-top:10px" id="createSettings"></div>
       </div>
-      <div class="row">
-        <button class="btn ghost" onclick="pickUpload()">⬆️ Upload <span class="note">(max 15 GB)</span></button>
-        <button class="btn ghost" onclick="pickDrive()">▽ Google Drive</button>
-        <input type="file" id="file" accept="video/*" hidden>
+      <div class="glass summary" id="summaryPanel">
+        <h3 style="margin-top:0">Summary</h3>
+        <div id="summaryRows"></div>
+        <button class="btn big" id="createBtn" onclick="createProject()" disabled>✂️ Create clips</button>
+        <p class="note" style="margin-top:10px">By continuing, you confirm you have rights to use this video.</p>
       </div>
-      <div id="driveBox" style="display:none;margin-top:12px">
-        <input id="driveLink" placeholder="Paste a Google Drive share link" style="width:100%;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:12px">
-        <div class="row"><button class="btn" onclick="createDrive()">Add Drive video</button></div>
-        <p class="note">Set the file to “Anyone with the link can view”.</p>
-      </div>
-      <p id="msg" class="note"></p>
     </div>
     <div class="stats">
       <div class="glass stat"><b id="stP">0</b><span>Projects</span></div>
@@ -193,6 +230,7 @@ details.clip-details[open ] summary::before{content:'▾ '}
           <button class="btn ghost small" onclick="testAi()">Test AI</button>
         </div>
         <p class="note" id="aiTest"></p>
+        <p class="note" id="ytAuth"></p>
       </div>
       <p class="note" id="recipeSaved"></p>
       <div id="recipeForm"></div>
@@ -206,6 +244,36 @@ details.clip-details[open ] summary::before{content:'▾ '}
       <textarea id="fixText" placeholder="What should I fix or change here?"></textarea>
       <div class="row"><button class="btn" onclick="addFix()">Save fix request</button></div>
       <div id="fixList" style="margin-top:8px"></div>
+    </div>
+  </section>
+  <section id="credits" style="display:none">
+    <div class="glass">
+      <h2 style="margin-top:0">💳 Credits</h2>
+      <p class="note" id="creditState"></p>
+      <div id="ownerBox">
+        <p class="note">Owner? Enter your owner key once on this device — it stays unlocked here (phone, PC, Mac, Linux). From any new place, just enter the key once again.</p>
+        <div class="row"><input type="password" id="ownerKey" placeholder="Owner key" style="flex:1" autocomplete="off"><button class="btn" onclick="ownerLogin()">Unlock owner access</button></div>
+        <p class="note" id="ownerMsg"></p>
+      </div>
+      <div id="buyBox" style="display:none">
+        <h3 class="sec-h">Buy credits</h3>
+        <p class="note">Pay with bKash, enter the transaction ID, the owner approves it. There is no automatic check — approval is manual.</p>
+        <div class="row" id="packRow"></div>
+        <div style="margin:12px 0">
+          <img src="/bkash-qr.png" alt="bKash QR code" style="width:200px;max-width:100%;border-radius:12px;border:1px solid var(--line);display:block" onerror="this.style.display='none';document.getElementById('qrSoon').style.display='block'">
+          <div id="qrSoon" style="display:none"><p class="note" style="margin:0">QR coming soon — the owner is adding the bKash QR code.</p></div>
+        </div>
+        <label>bKash transaction ID</label>
+        <input type="text" id="txnId" placeholder="Enter the transaction ID from your bKash payment" style="width:100%" autocomplete="off">
+        <div class="row"><button class="btn" onclick="buyCredits()">Submit payment</button></div>
+        <p class="note" id="buyMsg"></p>
+        <div id="myPayments"></div>
+      </div>
+      <div id="ownerPanel" style="display:none">
+        <h3 class="sec-h">Owner — pending payments</h3>
+        <p class="note">Approve a payment after checking it in bKash. Approving adds the credits to that visitor's device.</p>
+        <div id="payList"></div>
+      </div>
     </div>
   </section>
 </main>
@@ -229,9 +297,9 @@ function tplPreviewStyle(p){
   if(!p)return '';
   return `font-size:${p.fontSize};color:${p.color};background:${p.background};font-weight:${p.fontWeight};font-style:${p.fontStyle};text-shadow:${p.textShadow};font-family:${p.fontFamily}`;
 }
-function show(id){for(const s of ['dash','project','recipe','fix'])document.getElementById(s).style.display=s===id?'block':'none';
+function show(id){for(const s of ['dash','project','recipe','fix','credits'])document.getElementById(s).style.display=s===id?'block':'none';
   document.querySelectorAll('nav button').forEach(b=>b.classList.remove('on'));
-  if(id==='dash')load(); if(id==='recipe')loadRecipe(); if(id==='fix')loadFix();}
+  if(id==='dash')load(); if(id==='recipe')loadRecipe(); if(id==='fix')loadFix(); if(id==='credits')loadCredits();}
 async function api(p,m,b){const r=await fetch(p,{method:m||'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;}
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function fmtTime(s){s=Math.max(0,Math.round(s||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
@@ -273,6 +341,121 @@ async function load(){
     <p>${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clip_count||0} clips</p>
     <p><span class="badge gold">${p.top_score||0} VIRAL</span>${p.top_score?gradeBadge(p.top_score):''}<span class="badge">${srcLabel(p)}</span><span class="badge grey">${esc(p.transcript_status||'')}</span></p>
   </div>`).join('')||'<p class="note">No projects yet — paste a link above.</p>';
+  updateSummary();renderBrandKit();
+}
+/* ---------- Opus-style single-page create flow ---------- */
+// Opus dropdowns mapped onto the existing mechanics:
+// AI picks range → clip count (Auto = 5); clip-length range → min/max
+// length (Auto = 5–180s). Custom uses the manual min/max inputs.
+const PICKS_MAP={'Auto':5,'1-5':5,'6-10':10,'11-15':15,'16-20':20,'21-30':30};
+const LEN_MAP={'auto':[5,180],'0-30':[5,30],'30-60':[30,60],'60-90':[60,90],'90-180':[90,180]};
+function updateCreateBtn(){
+  const link=(document.getElementById('link')?.value||'').trim();
+  for(const id of ['createBtn','createBtnTop']){const b=document.getElementById(id);if(b)b.disabled=!link;}
+}
+function renderBrandKit(){
+  const rc=document.getElementById('recipeCard');
+  if(rc)rc.innerHTML=`<h3>📋 Recipe</h3><p style="margin:0"><b>${esc(recipe.recipe||'Clip long video')}</b></p><p class="note" style="margin:6px 0 0">Long video → vertical Shorts with captions and hooks.</p>`;
+  const el=document.getElementById('brandCard');if(!el)return;
+  const r=recipe;
+  const isNone=(r.brandKit||'No brand kit')==='No brand kit';
+  el.innerHTML=`<h3>🎨 Brand kit</h3>
+    <p style="margin:0"><b>${isNone?'No brand kit':esc(r.brandKit)}</b></p>
+    <div class="row"><img class="logo-img" src="/logo.png" alt="logo" style="width:40px;height:40px">
+    <span class="note">Logo ${r.uniqueLogo?'· on':'· off'}<br>Intro ${r.uniqueTitleCard?'· on':'· off'} · Outro ${r.uniqueEndCard?'· on':'· off'}<br>Captions: ${esc(r.captionStyle||'Word Cut')}</span></div>`;
+}
+function renderCreateSettings(){
+  const el=document.getElementById('createSettings');if(!el)return;
+  const r=recipe;
+  const tog=(k,t,d)=>`<div class="tog"><div><b>${t}</b><span>${d}</span></div><input type="checkbox" ${r[k]?'checked':''} onchange="saveCreateField('${k}',this.checked)"></div>`;
+  const custom=r.clipLengthRange==='custom';
+  el.innerHTML=`
+  <h2 style="margin-top:0">Recipe settings</h2>
+  <h3 class="sec-h">Clipping</h3>
+  ${tog('clipping','Clipping','Let the AI pick the best moments')}
+  <div class="row">
+    <span class="note">AI picks:</span>
+    <select onchange="saveCreateField('aiPicksRange',this.value)">${['Auto','1-5','6-10','11-15','16-20','21-30'].map(v=>`<option ${r.aiPicksRange===v?'selected':''}>${v}</option>`).join('')}</select>
+    <span class="note">Clip length:</span>
+    <select onchange="saveCreateField('clipLengthRange',this.value)">${[['auto','Auto (0m–3m)'],['0-30','0–30s'],['30-60','30s–60s'],['60-90','60s–90s'],['90-180','90s–3m'],['custom','Custom']].map(([v,l])=>`<option value="${v}" ${r.clipLengthRange===v?'selected':''}>${l}</option>`).join('')}</select>
+    ${custom?`<span class="note">Min</span><input type="number" value="${r.customMin||15}" min="5" max="120" style="width:80px" onchange="saveCreateField('customMin',+this.value)"><span class="note">s</span><span class="note">Max</span><input type="number" value="${r.customMax||45}" min="5" max="180" style="width:80px" onchange="saveCreateField('customMax',+this.value)"><span class="note">s</span>`:''}
+  </div>
+  <label style="margin-top:14px">Moments to include (optional)</label>
+  <textarea id="momentsPrompt" placeholder="Example: Compile all the hilarious moments" style="min-height:64px" onchange="saveCreateField('momentsPrompt',this.value)">${esc(r.momentsPrompt||'')}</textarea>
+  <h3 class="sec-h">Essentials</h3>
+  ${tog('captions','Captions','Burned-in word captions on every clip')}
+  <label>Choose a style</label>
+  <div class="carousel" id="createTplCarousel"></div>
+  <h3 class="sec-h">Auto hook <span class="badge grey">Beta</span></h3>
+  ${tog('autoHook','Auto hook','AI writes a scroll-stopping hook')}
+  <div class="row">
+    <span class="note">Type:</span>
+    <select onchange="saveCreateField('hookType',this.value)">${['Headline','Viral hook'].map(v=>`<option ${r.hookType===v?'selected':''}>${v}</option>`).join('')}</select>
+    <span class="note">Style:</span>
+    <select onchange="saveCreateField('hookTemplate',this.value)">${['Classic','Editorial','Statement','Sunset'].map(v=>`<option ${r.hookTemplate===v?'selected':''}>${v}</option>`).join('')}</select>
+  </div>
+  <h3 class="sec-h">Sound sharp</h3>
+  ${tog('speechCleanup','Speech cleanup','Remove pauses & filler words')}
+  ${tog('enhanceAudio','Enhance audio','Cleaner, louder voice')}
+  ${tog('autoSfx','Auto SFX','Sound effects on key moments')}
+  <h3 class="sec-h">Look good</h3>
+  ${tog('autoZoom','Auto Zoom','Slow zoom into the action')}
+  ${tog('autoTransitions','Auto transitions','Smooth cuts between scenes')}
+  ${tog('autoColor','Auto Color Correction','Balanced colours on every clip')}
+  <h3 class="sec-h">Translate</h3>
+  ${tog('voiceDubbing','Voice dubbing','Dub clips in another voice')}
+  ${tog('captionTranslation','Caption translation','Translate captions — Bengali ↔ English only')}
+  <p class="note" id="createSaved"></p>`;
+  renderCreateTplCarousel();
+}
+function renderCreateTplCarousel(){
+  const g=document.getElementById('createTplCarousel');if(!g)return;
+  const curTpl=recipe.captionTemplate||'word-cut';
+  g.innerHTML=templates.map(t=>`<div class="tpl ${t.id===curTpl?'on':''}" onclick="pickCreateTemplate('${t.id}','${esc(t.name)}')">
+    <div class="prev" style="${tplPreviewStyle(t.preview)}">Your caption here</div>
+    <b>${esc(t.name)}</b><span>${esc(t.desc)}</span></div>`).join('')||'<p class="note">Templates could not be loaded.</p>';
+}
+async function pickCreateTemplate(id,name){
+  recipe.captionTemplate=id;recipe.captionStyle=name;
+  await api('/api/recipe','POST',recipe);
+  renderCreateTplCarousel();updateSummary();renderBrandKit();
+  const el=document.getElementById('createSaved');if(el)el.textContent='Saved ✓ '+new Date().toLocaleTimeString();
+}
+async function saveCreateField(k,v){
+  recipe[k]=v;
+  await api('/api/recipe','POST',recipe);
+  if(k==='clipLengthRange'||k==='aiPicksRange')renderCreateSettings();
+  updateSummary();renderBrandKit();
+  const el=document.getElementById('createSaved');if(el)el.textContent='Saved ✓ '+new Date().toLocaleTimeString();
+}
+function updateSummary(){
+  const el=document.getElementById('summaryRows');if(!el)return;
+  const r=recipe;
+  const picks=PICKS_MAP[r.aiPicksRange]||5;
+  const len=r.clipLengthRange==='custom'
+    ? `${r.customMin||15}–${r.customMax||45}s`
+    : (r.clipLengthRange==='auto' ? 'Auto (0m–3m)' : (r.clipLengthRange||'auto').replace('-','–')+'s');
+  const premium=[r.uniqueLogo?'Logo':null,r.uniqueTitleCard?'Title card':null,r.uniqueEndCard?'End card':null].filter(Boolean);
+  el.innerHTML=`
+    <div class="sumrow"><span>Clipping</span><b>${r.clipping?'On · '+picks+' picks':'Off'}</b></div>
+    <div class="sumrow"><span>Clip length</span><b>${len}</b></div>
+    <div class="sumrow"><span>Captions</span><b>${r.captions?'On · '+esc(r.captionStyle||'Word Cut'):'Off'}</b></div>
+    <div class="sumrow"><span>Headline</span><b>${r.autoHook?esc(r.hookType||'Headline')+' · '+esc(r.hookTemplate||'Classic'):'Off'}</b></div>
+    <div class="sumrow"><span>Premium features</span><b>${premium.length?premium.join(', '):'Off'}</b></div>`;
+  updateCreateBtn();
+}
+async function loadYtAuth(){
+  try{
+    const s=await api('/api/youtube-auth');
+    const el=document.getElementById('ytAuth');
+    if(el)el.textContent='YouTube login: '+(s.cookies_configured?'✅ connected — YouTube downloads use your login.':'⚠️ not connected — YouTube may block downloads. Set YT_COOKIES_B64 in Render to connect.');
+  }catch(e){/* endpoint is optional */}
+}
+async function loadRecipeSettings(){
+  try{const {settings}=await api('/api/recipe');recipe=settings;}catch(e){}
+  await loadTemplates();
+  renderCreateSettings();renderBrandKit();updateSummary();updateCreateBtn();
+  loadYtAuth();
 }
 async function createProject(){
   const url=document.getElementById('link').value.trim();
@@ -362,6 +545,14 @@ async function openP(id){
       <label>Start (seconds)</label><input type="number" id="ms" value="0" style="width:110px">
       <label>End (seconds)</label><input type="number" id="me" value="30" style="width:110px">
       <div class="row"><button class="btn ghost" onclick="addClip()">Add clip</button></div></div>`;
+  // Create-flow choices carry into the project: AI picks → clip count,
+  // clip-length range → min/max length (Custom keeps the manual inputs).
+  const cntEl=document.getElementById('cnt');
+  if(cntEl)cntEl.value=PICKS_MAP[recipe.aiPicksRange]||5;
+  const mnEl=document.getElementById('minLen'), mxEl=document.getElementById('maxLen');
+  if(recipe.clipLengthRange==='custom'){if(mnEl)mnEl.value=recipe.customMin||15;if(mxEl)mxEl.value=recipe.customMax||45;}
+  else{const [a,b]=LEN_MAP[recipe.clipLengthRange]||[15,45];if(mnEl)mnEl.value=a;if(mxEl)mxEl.value=b;}
+  syncChips();
   renderEditor(p);
 }
 function filteredClips(p){
@@ -603,7 +794,7 @@ async function findClips(){
   const count=+document.getElementById('cnt').value||5;
   const minSec=+document.getElementById('minLen').value||15;
   const maxSec=+document.getElementById('maxLen').value||45;
-  try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count,min_sec:minSec,max_sec:maxSec});
+  try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count,min_sec:minSec,max_sec:maxSec,moments:recipe.momentsPrompt||''});
     alert('Asked for '+r.requested+' clips ('+r.min_sec+'–'+r.max_sec+'s), found '+r.found+' ('+r.engine+(r.note?' — '+r.note:'')+')');
   }catch(e){alert(e.message);}
   openP(cur);
@@ -771,7 +962,7 @@ const RECIPE_FIELDS=[
 async function loadRecipe(){
   const {settings}=await api('/api/recipe');recipe=settings;
   await loadTemplates();
-  loadAiSettings();
+  loadAiSettings();loadYtAuth();
   document.getElementById('recipeForm').innerHTML=RECIPE_FIELDS.map(f=>{
     if(f.type==='toggle')return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><input type="checkbox" data-k="${f.k}" ${recipe[f.k]?'checked':''} onchange="saveRecipeField('${f.k}',this.checked)"></div>`;
     if(f.type==='templates')return `<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,.06)"><b>${f.t}</b><span style="display:block;font-size:12px;color:var(--mut)">${f.d}</span><div class="tplgrid" id="tplGrid"></div></div>`;
@@ -822,6 +1013,77 @@ async function testAi(){
   }catch(e){el.textContent='Test failed: '+e.message;}
 }
 
+/* ---------- Credits & owner access ---------- */
+let creditInfo=null, selectedPack=null;
+async function loadCredits(){
+  try{
+    const s=await api('/api/credits');creditInfo=s;
+    const balTxt=!s.paywall?'':(s.owner?'👑 Owner — unlimited':'💳 '+s.credits+' credits');
+    for(const id of ['creditBal','creditBalSide']){const b=document.getElementById(id);if(b)b.textContent=balTxt;}
+    const st=document.getElementById('creditState');
+    if(st)st.textContent=!s.paywall
+      ?'Credits are off — the site is open for everyone.'
+      :(s.owner?'👑 Owner — unlimited. You never pay and never see a paywall.':'Your balance: '+s.credits+' credits. Creating a project costs 1, finding clips 1, cutting a clip 2, translating 1, downloading is free.');
+    const ob=document.getElementById('ownerBox');if(ob)ob.style.display=(s.paywall&&!s.owner)?'block':'none';
+    const bb=document.getElementById('buyBox');if(bb)bb.style.display=(s.paywall&&!s.owner)?'block':'none';
+    const op=document.getElementById('ownerPanel');if(op)op.style.display=s.owner?'block':'none';
+    if(s.packs)renderPacks(s.packs);
+    if(s.owner)loadPayments();else if(s.paywall)loadMyPayments();
+  }catch(e){/* credits panel is optional — the rest still works */}
+}
+function renderPacks(packs){
+  const row=document.getElementById('packRow');if(!row)return;
+  if(!selectedPack&&packs.length)selectedPack=packs[0].credits;
+  row.innerHTML=packs.map(p=>`<button class="chip ${selectedPack===p.credits?'on':''}" onclick="selectPack(${p.credits})">${p.credits} credits · ৳${p.price}</button>`).join('');
+}
+function selectPack(c){selectedPack=c;if(creditInfo&&creditInfo.packs)renderPacks(creditInfo.packs);}
+async function ownerLogin(){
+  const key=document.getElementById('ownerKey').value;
+  const m=document.getElementById('ownerMsg');
+  if(!key){m.textContent='Enter the owner key first.';return;}
+  try{
+    await api('/api/owner-login','POST',{key});
+    m.textContent='✅ Owner unlocked on this device — unlimited.';
+    document.getElementById('ownerKey').value='';
+    loadCredits();
+  }catch(e){m.textContent='❌ '+e.message;}
+}
+async function buyCredits(){
+  const txn=document.getElementById('txnId').value.trim();
+  const m=document.getElementById('buyMsg');
+  if(!selectedPack){m.textContent='Pick a credit pack first.';return;}
+  if(!txn){m.textContent='Enter the bKash transaction ID.';return;}
+  try{
+    const r=await api('/api/credits/buy','POST',{pack:selectedPack,txn_id:txn});
+    m.textContent='✅ Submitted — '+(r.note||'pending approval.');
+    document.getElementById('txnId').value='';
+    loadMyPayments();loadCredits();
+  }catch(e){m.textContent='❌ '+e.message;}
+}
+async function loadMyPayments(){
+  const box=document.getElementById('myPayments');if(!box)return;
+  try{
+    const {payments}=await api('/api/credits/mine');
+    box.innerHTML=payments.length?'<label>Your payments</label>'+payments.map(p=>`<p class="note">#${p.id} · ${p.pack_credits} credits · ৳${p.price} · ${esc(p.txn_id)} · <b>${esc(p.status)}</b></p>`).join(''):'';
+  }catch(e){/* optional */}
+}
+async function loadPayments(){
+  const box=document.getElementById('payList');if(!box)return;
+  try{
+    const {payments}=await api('/api/credits/payments');
+    const pend=payments.filter(p=>p.status==='pending');
+    box.innerHTML=pend.length?pend.map(p=>`<div class="fixitem">
+      <div>#${p.id} · <b>${p.pack_credits} credits · ৳${p.price}</b> · txn ${esc(p.txn_id)} · device ${esc((p.device_id||'').slice(0,8))}… · ${esc(p.created_at||'')}</div>
+      <div class="row"><button class="btn small" onclick="decidePay(${p.id},'approve')">✅ Approve</button>
+      <button class="btn danger small" onclick="decidePay(${p.id},'reject')">Reject</button></div></div>`).join('')
+      :'<p class="note">No pending payments.</p>';
+  }catch(e){box.innerHTML='<p class="err">'+esc(e.message)+'</p>';}
+}
+async function decidePay(id,action){
+  try{await api('/api/credits/payments/'+id+'/'+action,'POST',{});loadPayments();loadCredits();}
+  catch(e){alert(e.message);}
+}
+
 /* ---------- Fix requests (server-stored) ---------- */
 async function loadFix(){
   const {requests}=await api('/api/fix-requests');
@@ -860,7 +1122,7 @@ async function delFix(id){
   if(!confirm('Delete this fix request?'))return;
   await api('/api/fix-requests/'+id,'DELETE');loadFix();
 }
-load();loadFix();
+load();loadFix();loadRecipeSettings();loadCredits();
 </script>
 </body>
 </html>
