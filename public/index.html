@@ -104,6 +104,15 @@ label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
 .strip .thumb:hover{border-color:var(--acc)}
 .chip{background:var(--glass);border:1px solid var(--line);color:var(--txt);border-radius:999px;padding:8px 16px;cursor:pointer;font-size:14px}
 .chip.on{background:linear-gradient(90deg,var(--acc),#ff8a3d);border-color:transparent;font-weight:700}
+details.clip-details{margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:6px}
+details.clip-details summary{cursor:pointer;color:var(--mut);font-size:14px;padding:6px 0;list-style:none}
+details.clip-details summary::-webkit-details-marker{display:none}
+details.clip-details summary::before{content:'▸ ';color:var(--acc)}
+details.clip-details[open ] summary::before{content:'▾ '}
+.checklist{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:6px 0}
+.checklist label{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--txt);margin:0;cursor:pointer}
+.checklist input[type=checkbox]{width:19px;height:19px;accent-color:var(--acc);cursor:pointer;flex:none}
+.readypost{display:inline-block;background:rgba(61,220,132,.15);border:1px solid rgba(61,220,132,.5);border-radius:999px;padding:2px 10px;font-size:12px;margin:2px 4px 2px 0;color:#8ff0b3}
 @media(max-width:760px){
   aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}
   .topbar{display:flex}.stats{flex-wrap:wrap}
@@ -135,9 +144,9 @@ label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
   <section id="dash">
     <div class="glass hero">
       <h1>Make Shorts from long videos</h1>
-      <p>Paste a YouTube link — the app detects the video, fetches the transcript itself, analyses viewer traffic and cuts the best clips. No transcript paste needed.</p>
+      <p>Paste a YouTube, Twitch or Kick link — the app detects the video, fetches the transcript itself, analyses viewer traffic and cuts the best clips. No transcript paste needed.</p>
       <div class="paste">
-        <input id="link" placeholder="Drop a YouTube link" autocomplete="off">
+        <input id="link" placeholder="Drop a YouTube, Twitch or Kick link" autocomplete="off">
         <button class="btn" onclick="createProject()">Create project</button>
       </div>
       <div class="row">
@@ -171,6 +180,20 @@ label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
     <div class="glass">
       <h2 style="margin-top:0">Recipe settings</h2>
       <p class="note">Everything is kept — nothing is removed. Turn things on when you need them; every change saves automatically.</p>
+      <div style="border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0">
+        <h3 style="margin:0 0 4px">🧠 Settings → AI</h3>
+        <p class="note" style="margin:0 0 10px">Which brain picks the best moments. The built-in heuristic always works with no key; Gemini needs a key on the server.</p>
+        <div class="row" style="margin-top:0">
+          <span class="note">Engine:</span>
+          <select id="aiEngine" onchange="setAiEngine(this.value)">
+            <option value="heuristic">Built-in heuristic</option>
+            <option value="gemini">Gemini (needs key)</option>
+          </select>
+          <span class="note" id="aiModel"></span>
+          <button class="btn ghost small" onclick="testAi()">Test AI</button>
+        </div>
+        <p class="note" id="aiTest"></p>
+      </div>
       <p class="note" id="recipeSaved"></p>
       <div id="recipeForm"></div>
     </div>
@@ -213,6 +236,14 @@ async function api(p,m,b){const r=await fetch(p,{method:m||'GET',headers:{'Conte
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function fmtTime(s){s=Math.max(0,Math.round(s||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
 function grade(score){score=+score||0;if(score>=90)return'A+';if(score>=80)return'A';if(score>=70)return'B+';if(score>=60)return'B';if(score>=50)return'C';return'D';}
+function srcLabel(p){
+  if(!p)return 'YouTube';
+  if(p.source_type==='drive')return 'Google Drive';
+  if(p.source_type==='upload')return 'Uploaded file';
+  if(p.source_type==='twitch')return 'Twitch';
+  if(p.source_type==='kick')return 'Kick';
+  return 'YouTube';
+}
 function gradeBadge(score){const g=grade(score);const cls=score>=80?'gold':score>=60?'purple':'grey';return `<span class="badge ${cls}">${g}</span>`;}
 function whyWorks(c){
   const reasons=[];
@@ -240,13 +271,13 @@ async function load(){
     ${p.thumb_url?`<img src="${p.thumb_url}" alt="">`:''}
     <h3>${esc(p.title)}</h3>
     <p>${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clip_count||0} clips</p>
-    <p><span class="badge gold">${p.top_score||0} VIRAL</span>${p.top_score?gradeBadge(p.top_score):''}<span class="badge">${p.source_type==='drive'?'Google Drive':p.source_type==='upload'?'Uploaded file':'YouTube'}</span><span class="badge grey">${esc(p.transcript_status||'')}</span></p>
+    <p><span class="badge gold">${p.top_score||0} VIRAL</span>${p.top_score?gradeBadge(p.top_score):''}<span class="badge">${srcLabel(p)}</span><span class="badge grey">${esc(p.transcript_status||'')}</span></p>
   </div>`).join('')||'<p class="note">No projects yet — paste a link above.</p>';
 }
 async function createProject(){
   const url=document.getElementById('link').value.trim();
   const m=document.getElementById('msg');
-  if(!url){m.innerHTML='<span class="err">Paste a YouTube link first.</span>';return;}
+  if(!url){m.innerHTML='<span class="err">Paste a YouTube, Twitch or Kick link first.</span>';return;}
   try{m.textContent='Working automatically…';const {project}=await api('/api/projects','POST',{url});
     m.textContent='Project created — transcript is being fetched automatically. Opening it…';
     setTimeout(()=>openP(project.id),800);
@@ -297,7 +328,7 @@ async function openP(id){
     : (p.source_url||'#');
   document.getElementById('pHead').innerHTML=`
     <h2 style="margin:0 0 4px">${esc(p.title)}</h2>
-    <p class="note">${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clips.length} clips · ${p.source_type==='drive'?'Google Drive':p.source_type==='upload'?'Uploaded file':'YouTube'}</p>
+    <p class="note">${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clips.length} clips · ${srcLabel(p)}</p>
     ${p.is_live?`<span class="badge live">🔴 LIVE now</span>`:''}${p.live_status==='is_upcoming'?`<span class="badge gold">⏳ Not started yet</span>`:''}${p.live_status==='was_live'?`<span class="badge grey">Ended live (VOD)</span>`:''}
     ${p.fetch_error?`<p class="err">${esc(p.fetch_error)}</p>`:''}
     ${stageHtml(p)}${trafficHtml(p)}
@@ -314,7 +345,15 @@ async function openP(id){
       ${[1,2,5,10].map(n=>`<button class="chip" id="chip-${n}" onclick="setCount(${n})">${n}</button>`).join('')}
       <input type="number" id="cnt" value="5" min="1" style="width:110px" oninput="syncChips()">
     </div>
-    <div class="row"><button class="btn" onclick="findClips()">Make my clips</button></div>
+    <label>Clip length (PeakCut standard: 15–45s)</label>
+    <div class="row">
+      <span class="note">Shortest</span><input type="number" id="minLen" value="15" min="5" max="120" style="width:90px"><span class="note">s</span>
+      <span class="note">Longest</span><input type="number" id="maxLen" value="45" min="5" max="180" style="width:90px"><span class="note">s</span>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="findClips()">Make my clips</button>
+      <button class="btn ghost" onclick="firstTest()" title="PeakCut first test: 3 clips, 15–45s, 720p, captions on">⚡ First test: 3 clips · 15–45s · 720p</button>
+    </div>
     <div class="tabs">
       ${[['all','All'],['top','Top 80+'],['mp4','MP4 ready'],['needscut','Needs cut'],['posted','Posted']].map(([k,l])=>`<button class="${curFilter===k?'on':''}" onclick="setFilter('${k}')">${l}</button>`).join('')}
     </div>
@@ -477,66 +516,144 @@ async function liveClip(){
   }catch(e){alert(e.message);}
   openP(cur);
 }
+function checklistOf(c){
+  try{return JSON.parse(c.checklist_json||'null')||{};}catch{return {};}
+}
 function clipHtml(c){
   const caps=JSON.parse(c.captions_json||'[]');
   const tCaps=c.translated_captions_json?JSON.parse(c.translated_captions_json):null;
   const dur=Math.round((+c.end_sec||0)-(+c.start_sec||0));
+  const chk=checklistOf(c);
+  const allChecked=chk.hook&&chk.ending&&chk.captions&&chk.face;
   return `<div class="glass clip" id="clip-${c.id}">
     <div class="row" style="margin-top:0">
       <span class="badge gold">${c.score||0} VIRAL</span>${gradeBadge(c.score)}
       <span class="badge grey">${fmtTime(c.start_sec)} → ${fmtTime(c.end_sec)} · ${dur}s</span>
       <span class="badge ${c.render_status==='ready'?'green':'grey'}">${c.render_status==='ready'?'✓ MP4 ready':(c.render_status||'idle')}</span>
       <span class="badge purple">${esc(c.status||'new')}</span>
+      ${c.live_clip?`<span class="badge live">🔴 From live</span>`:''}
       ${c.translated_lang?`<span class="badge">${c.translated_lang.toUpperCase()} translation</span>`:''}
+      ${allChecked?`<span class="readypost">✅ Ready to post</span>`:''}
     </div>
     <h3>🎯 ${esc(c.hook||'')}</h3>
     <div class="vbar"><i style="width:${Math.min(100,+c.score||0)}%"></i></div>
     <div class="why"><b>Why this moment works:</b> ${esc(whyWorks(c))}</div>
-    <label style="margin-top:6px">Captions${tCaps?' (translated)':''}</label>
-    <div class="caps" id="caps-${c.id}">${(tCaps||caps).map(x=>`<div>${esc(x)}</div>`).join('')||'<div class="note">No captions.</div>'}</div>
-    <p class="note">${esc(c.hashtags||'')}</p>
-    <div id="edit-${c.id}"></div>
+    <div id="prev-${c.id}"></div>
     <div class="row">
-      <span class="note">Caption template:</span>
-      <select onchange="setClipTemplate(${c.id},this.value)">${(templates.length?templates:[{id:'word-cut',name:'Word Cut'},{id:'neon',name:'Neon'},{id:'karaoke',name:'Karaoke'},{id:'pill',name:'Pill'},{id:'big-centre',name:'Big Centre'}]).map(t=>`<option value="${t.id}" ${(c.caption_template||'word-cut')===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select>
-      <span class="note">Caption offset (s):</span>
-      <input type="number" step="0.1" min="-5" max="5" value="${+(c.caption_offset||0)}" style="width:80px" onchange="setClipOffset(${c.id},this.value)" title="Nudge captions earlier (-) or later (+) in 0.1s steps">
-      <button class="btn ghost small" onclick="showTimed(${c.id})">🕐 Timed captions</button>
-      ${c.live_clip?`<span class="badge live">🔴 From live</span>`:''}
-    </div>
-    <div id="timed-${c.id}"></div>
-    <div class="row">
-      <select onchange="setClip(${c.id},'layout',this.value)" title="Reframe layout">
-        <option value="full" ${c.layout==='full'?'selected':''}>Full frame</option>
-        <option value="split" ${c.layout==='split'?'selected':''}>Split</option>
-        <option value="spotlight" ${c.layout==='spotlight'?'selected':''}>Spotlight</option>
-      </select>
-      <select onchange="setClip(${c.id},'resolution',this.value)" title="Export size">
-        <option value="720p" ${c.resolution==='720p'?'selected':''}>720p</option>
-        <option value="1080p" ${c.resolution==='1080p'?'selected':''}>1080p</option>
-      </select>
+      <button class="btn ghost small" onclick="previewClip(${c.id})">▶ Preview</button>
       <button class="btn small" onclick="renderClip(${c.id})">✂️ Cut this clip</button>
       ${c.video_file?`<a class="btn ghost small" href="/renders/${c.video_file}" download>⬇ Download MP4</a>`:`<span class="note">Not cut yet</span>`}
-      <button class="btn ghost small" onclick="translateClip(${c.id})">🌐 Translate BN↔EN</button>
     </div>
-    <div class="row">
-      <span class="note">Status:</span>
-      ${['new','ready','posted'].map(s=>`<button class="btn ${c.status===s?'':'ghost'} small" onclick="setClip(${c.id},'status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}
-      <button class="btn ghost small" onclick="editClip(${c.id})">✏️ Edit</button>
-      <button class="btn ghost small" onclick="newHooks(${c.id})">💡 New hooks</button>
-      <button class="btn ghost small" onclick="copyText(${c.id})">📋 Copy text</button>
-      <button class="btn danger small" onclick="deleteClip(${c.id})">🗑 Delete</button>
-    </div>
-    <div id="hooks-${c.id}"></div>
+    <details class="clip-details">
+      <summary>Details — captions, template, layout, translate &amp; more</summary>
+      <label style="margin-top:6px">Captions${tCaps?' (translated)':''}</label>
+      <div class="caps" id="caps-${c.id}">${(tCaps||caps).map(x=>`<div>${esc(x)}</div>`).join('')||'<div class="note">No captions.</div>'}</div>
+      <p class="note">${esc(c.hashtags||'')}</p>
+      <div class="row">
+        <span class="note">Caption template:</span>
+        <select onchange="setClipTemplate(${c.id},this.value)">${(templates.length?templates:[{id:'word-cut',name:'Word Cut'},{id:'neon',name:'Neon'},{id:'karaoke',name:'Karaoke'},{id:'pill',name:'Pill'},{id:'big-centre',name:'Big Centre'}]).map(t=>`<option value="${t.id}" ${(c.caption_template||'word-cut')===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select>
+        <span class="note">Caption offset (s):</span>
+        <input type="number" step="0.1" min="-5" max="5" value="${+(c.caption_offset||0)}" style="width:80px" onchange="setClipOffset(${c.id},this.value)" title="Nudge captions earlier (-) or later (+) in 0.1s steps">
+        <button class="btn ghost small" onclick="showTimed(${c.id})">🕐 Timed captions</button>
+      </div>
+      <div id="timed-${c.id}"></div>
+      <div class="row">
+        <select onchange="setClip(${c.id},'layout',this.value)" title="Reframe layout">
+          <option value="full" ${c.layout==='full'?'selected':''}>Full frame</option>
+          <option value="split" ${c.layout==='split'?'selected':''}>Split</option>
+          <option value="spotlight" ${c.layout==='spotlight'?'selected':''}>Spotlight</option>
+          <option value="duo" ${c.layout==='duo'?'selected':''}>Duo (creator + content)</option>
+        </select>
+        <select onchange="setClip(${c.id},'ratio',this.value)" title="Duo ratio — changes the output size when layout is Duo">
+          ${['9:16','1:1','4:5','16:9'].map(r=>`<option value="${r}" ${(c.ratio||'9:16')===r?'selected':''}>${r}</option>`).join('')}
+        </select>
+        <select onchange="setClip(${c.id},'duo_corner',this.value)" title="Duo facecam corner — Auto picks the busiest corner">
+          <option value="auto" ${(c.duo_corner||'auto')==='auto'?'selected':''}>Corner: Auto</option>
+          <option value="bottom-right" ${c.duo_corner==='bottom-right'?'selected':''}>Bottom-right</option>
+          <option value="bottom-left" ${c.duo_corner==='bottom-left'?'selected':''}>Bottom-left</option>
+          <option value="top-right" ${c.duo_corner==='top-right'?'selected':''}>Top-right</option>
+          <option value="top-left" ${c.duo_corner==='top-left'?'selected':''}>Top-left</option>
+        </select>
+        <select onchange="setClip(${c.id},'resolution',this.value)" title="Export size">
+          <option value="720p" ${c.resolution==='720p'?'selected':''}>720p</option>
+          <option value="1080p" ${c.resolution==='1080p'?'selected':''}>1080p</option>
+        </select>
+        <button class="btn ghost small" onclick="translateClip(${c.id})">🌐 Translate BN↔EN</button>
+      </div>
+      <div class="row">
+        <span class="note">Status:</span>
+        ${['new','ready','posted'].map(s=>`<button class="btn ${c.status===s?'':'ghost'} small" onclick="setClip(${c.id},'status','${s}')">${s[0].toUpperCase()+s.slice(1)}</button>`).join('')}
+        <button class="btn ghost small" onclick="editClip(${c.id})">✏️ Edit</button>
+        <button class="btn ghost small" onclick="newHooks(${c.id})">💡 New hooks</button>
+        <button class="btn ghost small" onclick="copyText(${c.id})">📋 Copy text</button>
+        <button class="btn danger small" onclick="deleteClip(${c.id})">🗑 Delete</button>
+      </div>
+      <div id="edit-${c.id}"></div>
+      <div id="hooks-${c.id}"></div>
+      <label style="margin-top:10px">Before you post — check each one:</label>
+      <div class="checklist">
+        ${[['hook','Hook'],['ending','Ending'],['captions','Captions'],['face','Face & audio']].map(([k,l])=>`<label><input type="checkbox" ${chk[k]?'checked':''} onchange="toggleCheck(${c.id},'${k}',this.checked)"> ${l}</label>`).join('')}
+      </div>
+      <p class="note" id="chk-note-${c.id}">${allChecked?'✅ All four checked — ready to post.':'Ticking never blocks anything — it is only a checklist.'}</p>
+    </details>
   </div>`;
 }
 async function saveTr(){await api('/api/projects/'+cur+'/transcript','POST',{transcript:document.getElementById('tr').value});openP(cur);}
 async function findClips(){
   const count=+document.getElementById('cnt').value||5;
-  try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count});
-    alert('Asked for '+r.requested+', found '+r.found+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');
+  const minSec=+document.getElementById('minLen').value||15;
+  const maxSec=+document.getElementById('maxLen').value||45;
+  try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count,min_sec:minSec,max_sec:maxSec});
+    alert('Asked for '+r.requested+' clips ('+r.min_sec+'–'+r.max_sec+'s), found '+r.found+' ('+r.engine+(r.note?' — '+r.note:'')+')');
   }catch(e){alert(e.message);}
   openP(cur);
+}
+async function firstTest(){
+  // PeakCut first test: 3 clips, 15–45s, 720p, captions on — then run.
+  document.getElementById('cnt').value=3;
+  document.getElementById('minLen').value=15;
+  document.getElementById('maxLen').value=45;
+  syncChips();
+  try{
+    const {settings}=await api('/api/recipe');
+    settings.captions=true;
+    await api('/api/recipe','POST',settings);
+  }catch(e){/* captions stay as they are */}
+  findClips();
+}
+async function previewClip(id){
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(!c)return;
+  const box=document.getElementById('prev-'+id);
+  if(c.video_file){
+    // Cut already — play the MP4 right in the card.
+    box.innerHTML=box.innerHTML?'':`<video src="/renders/${c.video_file}" controls autoplay style="width:100%;max-width:340px;border-radius:12px;margin-top:10px;display:block"></video>`;
+    return;
+  }
+  // Not cut yet — preview the moment in the full-video editor above.
+  box.innerHTML='';
+  seekTo(+c.start_sec);
+  if(ytPlayer&&ytPlayer.playVideo)ytPlayer.playVideo();
+  const ed=document.getElementById('editorBox');
+  if(ed)ed.scrollIntoView({behavior:'smooth'});
+}
+async function toggleCheck(id,key,checked){
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(!c)return;
+  const chk=checklistOf(c);chk[key]=!!checked;
+  await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{checklist:chk});
+  c.checklist_json=JSON.stringify(chk);
+  // Update the "Ready to post" mark in place — no full re-render, so the
+  // video player keeps playing.
+  const card=document.getElementById('clip-'+id);
+  if(!card)return;
+  const all=chk.hook&&chk.ending&&chk.captions&&chk.face;
+  let mark=card.querySelector('.readypost');
+  const row=card.querySelector('.row');
+  if(all&&!mark&&row){
+    const s=document.createElement('span');s.className='readypost';s.textContent='✅ Ready to post';
+    row.appendChild(s);
+  }else if(!all&&mark){mark.remove();}
+  const note=document.getElementById('chk-note-'+id);
+  if(note)note.textContent=all?'✅ All four checked — ready to post.':'Ticking never blocks anything — it is only a checklist.';
 }
 async function addClip(){
   try{await api('/api/projects/'+cur+'/clips','POST',{start_sec:+document.getElementById('ms').value,end_sec:+document.getElementById('me').value,hook:'Added manually.'});}
@@ -654,6 +771,7 @@ const RECIPE_FIELDS=[
 async function loadRecipe(){
   const {settings}=await api('/api/recipe');recipe=settings;
   await loadTemplates();
+  loadAiSettings();
   document.getElementById('recipeForm').innerHTML=RECIPE_FIELDS.map(f=>{
     if(f.type==='toggle')return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><input type="checkbox" data-k="${f.k}" ${recipe[f.k]?'checked':''} onchange="saveRecipeField('${f.k}',this.checked)"></div>`;
     if(f.type==='templates')return `<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,.06)"><b>${f.t}</b><span style="display:block;font-size:12px;color:var(--mut)">${f.d}</span><div class="tplgrid" id="tplGrid"></div></div>`;
@@ -679,6 +797,29 @@ async function saveRecipeField(k,v){
   recipe[k]=v;
   await api('/api/recipe','POST',recipe);
   document.getElementById('recipeSaved').textContent='Saved ✓ '+new Date().toLocaleTimeString();
+}
+
+/* ---------- Settings → AI ---------- */
+async function loadAiSettings(){
+  try{
+    const s=await api('/api/ai-settings');
+    const sel=document.getElementById('aiEngine');if(sel)sel.value=s.engine;
+    const m=document.getElementById('aiModel');
+    if(m)m.textContent='Model: '+s.model+(s.engine==='gemini'?(s.gemini_key_set?' · key is set':' · no key set'):'');
+  }catch(e){/* AI panel is optional — the rest of Recipe still works */}
+}
+async function setAiEngine(v){
+  await api('/api/ai-settings','POST',{engine:v});
+  loadAiSettings();
+}
+async function testAi(){
+  const el=document.getElementById('aiTest');
+  if(!el)return;
+  el.textContent='Testing…';
+  try{
+    const r=await api('/api/ai-settings/test');
+    el.textContent=(r.ready?'✅ ':'⚠️ ')+r.message;
+  }catch(e){el.textContent='Test failed: '+e.message;}
 }
 
 /* ---------- Fix requests (server-stored) ---------- */
