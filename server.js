@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS recipe (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   settings_json TEXT
 );
+CREATE TABLE IF NOT EXISTS fix_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  status TEXT DEFAULT 'new',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 const app = express();
@@ -411,9 +418,21 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
   res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(c.id) });
 });
 
+const DEFAULT_RECIPE = {
+  recipe: 'Clip long video', brandKit: 'No brand kit',
+  clipping: true, aiPicks: 'Auto', clipLength: 'auto',
+  captions: true, captionStyle: 'Word Cut',
+  autoHook: true, hookTemplate: 'Classic',
+  motionGraphics: false, aiEmojis: false, autoBroll: false,
+  speechCleanup: true, enhanceAudio: false, autoSfx: false,
+  autoZoom: false, autoTransitions: false, autoColor: false,
+  eyeContact: false, voiceDubbing: false,
+  captionTranslation: false, translationLang: 'bn-en',
+};
 app.get('/api/recipe', (req, res) => {
   const row = db.prepare('SELECT settings_json FROM recipe WHERE id=1').get();
-  res.json({ settings: row ? JSON.parse(row.settings_json) : { captions: 'Word Cut', autoHook: 'Classic', speechCleanup: true, clipLength: 'auto' } });
+  const saved = row ? JSON.parse(row.settings_json) : {};
+  res.json({ settings: { ...DEFAULT_RECIPE, ...saved } });
 });
 app.post('/api/recipe', (req, res) => {
   db.prepare(`INSERT INTO recipe (id, settings_json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET settings_json=excluded.settings_json`)
@@ -421,6 +440,84 @@ app.post('/api/recipe', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/fix-requests', (req, res) => res.json({ requests: [] }));
+// ---- Fix requests: real, server-stored ----
+app.get('/api/fix-requests', (req, res) => {
+  res.json({ requests: db.prepare('SELECT * FROM fix_requests ORDER BY id DESC').all() });
+});
+app.post('/api/fix-requests', (req, res) => {
+  const text = String(req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Write what to fix first.' });
+  const r = db.prepare(`INSERT INTO fix_requests (text, status) VALUES (?, 'new')`).run(text);
+  res.json({ request: db.prepare('SELECT * FROM fix_requests WHERE id=?').get(r.lastInsertRowid) });
+});
+app.patch('/api/fix-requests/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM fix_requests WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Request not found.' });
+  const sets = [], vals = [];
+  if (req.body?.text !== undefined) { sets.push('text=?'); vals.push(String(req.body.text)); }
+  if (req.body?.status !== undefined) {
+    if (!['new', 'working', 'done'].includes(req.body.status)) return res.status(400).json({ error: 'Status must be new, working or done.' });
+    sets.push('status=?'); vals.push(req.body.status);
+  }
+  if (sets.length) { sets.push("updated_at=datetime('now')"); db.prepare(`UPDATE fix_requests SET ${sets.join(',')} WHERE id=?`).run(...vals, row.id); }
+  res.json({ request: db.prepare('SELECT * FROM fix_requests WHERE id=?').get(row.id) });
+});
+app.delete('/api/fix-requests/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM fix_requests WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Request not found.' });
+  db.prepare('DELETE FROM fix_requests WHERE id=?').run(row.id);
+  res.json({ ok: true });
+});
+
+// ---- Clip pack export: one pack per project, with layout / size / translation ----
+app.get('/api/projects/:id/pack', (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found.' });
+  const clips = db.prepare('SELECT * FROM clips WHERE project_id=? ORDER BY score DESC').all(p.id);
+  res.json({
+    project: { id: p.id, title: p.title, channel: p.channel, source_url: p.source_url, source_type: p.source_type, duration_sec: p.duration_sec },
+    exported_at: new Date().toISOString(),
+    clips: clips.map((c) => ({
+      id: c.id, start_sec: c.start_sec, end_sec: c.end_sec, score: c.score,
+      hook: c.hook, captions: JSON.parse(c.captions_json || '[]'), hashtags: c.hashtags,
+      status: c.status, layout: c.layout, resolution: c.resolution,
+      render_status: c.render_status, video_file: c.video_file || null,
+      translated_hook: c.translated_hook || null,
+      translated_captions: c.translated_captions_json ? JSON.parse(c.translated_captions_json) : null,
+      translated_lang: c.translated_lang || null,
+    })),
+  });
+});
+
+// ---- Delete a clip / a project ----
+app.delete('/api/projects/:id/clips/:clipId', (req, res) => {
+  const c = db.prepare('SELECT * FROM clips WHERE id=? AND project_id=?').get(req.params.clipId, req.params.id);
+  if (!c) return res.status(404).json({ error: 'Clip not found.' });
+  if (c.video_file) { try { fs.unlinkSync(path.join(RENDER_DIR, c.video_file)); } catch {} }
+  db.prepare('DELETE FROM clips WHERE id=?').run(c.id);
+  res.json({ ok: true });
+});
+app.delete('/api/projects/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found.' });
+  db.prepare('DELETE FROM clips WHERE project_id=?').run(p.id);
+  db.prepare('DELETE FROM projects WHERE id=?').run(p.id);
+  res.json({ ok: true });
+});
+
+// ---- New hooks: 3 fresh variants built from the clip's own words ----
+app.post('/api/projects/:id/clips/:clipId/hooks', (req, res) => {
+  const c = db.prepare('SELECT * FROM clips WHERE id=? AND project_id=?').get(req.params.clipId, req.params.id);
+  if (!c) return res.status(404).json({ error: 'Clip not found.' });
+  const caps = JSON.parse(c.captions_json || '[]');
+  const firstLine = (caps[0] || c.hook || '').trim();
+  const hook = (c.hook || firstLine).trim();
+  const variants = [
+    hook,
+    firstLine && firstLine !== hook ? firstLine : hook + ' — watch till the end.',
+    /[?]$/.test(hook) ? hook : hook.replace(/[.!।]?$/, '') + '?',
+  ].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 3);
+  res.json({ hooks: variants });
+});
 
 app.listen(PORT, HOST, () => console.log(`Clip Studio listening on http://${HOST}:${PORT}`));
