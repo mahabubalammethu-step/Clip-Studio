@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.21.2"},"description":"Personal AI clipping app — paste a YouTube link, get ranked 9:16 Shorts clips with captions, cut real MP4s. Standalone Node.js server for Render Free.","engines":{"node":">=20"},"main":"server.js","name":"clip-studio","private":true,"scripts":{"dev":"node server.js","start":"node server.js"},"type":"commonjs","version":"0.1.0"}
