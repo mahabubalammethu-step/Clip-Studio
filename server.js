@@ -726,6 +726,7 @@ app.patch('/api/projects/:id/clips/:clipId', (req, res) => {
   const fields = ['hook', 'status', 'layout', 'resolution'];
   const sets = [], vals = [];
   for (const f of fields) if (req.body?.[f] !== undefined) { sets.push(`${f}=?`); vals.push(req.body[f]); }
+  if (req.body?.score !== undefined) { sets.push('score=?'); vals.push(Math.max(0, Math.min(100, parseInt(req.body.score, 10) || 0))); }
   if (req.body?.captions) { sets.push('captions_json=?'); vals.push(JSON.stringify(req.body.captions)); }
   if (req.body?.hashtags) { sets.push('hashtags=?'); vals.push(req.body.hashtags); }
   if (req.body?.caption_offset !== undefined) {
