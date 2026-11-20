@@ -83,6 +83,27 @@ label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
 .fixitem:last-child{border-bottom:0}
 .hookvar{display:block;width:100%;text-align:left;background:rgba(0,0,0,.35);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 12px;margin-top:6px;cursor:pointer;font-size:14px}
 .hookvar:hover{border-color:var(--acc)}
+.badge.live{background:rgba(255,40,40,.25);border-color:#ff4d4d;color:#ffb3b3}
+.editor{margin-top:14px}
+.player-wrap{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+.player-wrap iframe,.player-wrap #ytplayer{width:100%;height:100%;border:0}
+.timeline{position:relative;height:56px;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;margin-top:12px;cursor:pointer;overflow:hidden}
+.timeline .tclip{position:absolute;top:6px;height:20px;background:rgba(255,106,26,.55);border:1px solid var(--acc);border-radius:6px;font-size:11px;color:#fff;overflow:hidden;white-space:nowrap;padding:1px 5px}
+.timeline .thead{position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff;z-index:3;pointer-events:none}
+.timeline .trim{position:absolute;top:0;bottom:0;background:rgba(255,194,75,.18);border-left:2px solid var(--gold);border-right:2px solid var(--gold);z-index:2}
+.handle{position:absolute;top:0;bottom:0;width:14px;background:var(--gold);cursor:ew-resize;z-index:4;border-radius:4px;opacity:.9}
+.handle::after{content:'⋮';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#000;font-weight:900}
+.tplgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:8px}
+.tpl{border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;background:rgba(0,0,0,.35)}
+.tpl.on{border-color:var(--acc);box-shadow:0 0 14px rgba(255,106,26,.4)}
+.tpl .prev{border-radius:8px;padding:8px 6px;text-align:center;min-height:44px;display:flex;align-items:center;justify-content:center}
+.tpl b{display:block;font-size:13px;margin-top:6px}
+.tpl span{font-size:11px;color:var(--mut)}
+.strip{display:flex;gap:6px;overflow-x:auto;margin-top:10px;padding-bottom:4px}
+.strip .thumb{flex:none;width:96px;height:54px;border-radius:8px;border:1px solid var(--line);cursor:pointer;background-size:cover;background-position:center}
+.strip .thumb:hover{border-color:var(--acc)}
+.chip{background:var(--glass);border:1px solid var(--line);color:var(--txt);border-radius:999px;padding:8px 16px;cursor:pointer;font-size:14px}
+.chip.on{background:linear-gradient(90deg,var(--acc),#ff8a3d);border-color:transparent;font-weight:700}
 @media(max-width:760px){
   aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}
   .topbar{display:flex}.stats{flex-wrap:wrap}
@@ -168,6 +189,23 @@ label{font-size:13px;color:var(--mut);display:block;margin:12px 0 4px}
 </div>
 <script>
 let cur=null, curProject=null, curFilter='all', recipe={};
+let templates=[], ytApiReady=false, ytPlayer=null, ytTimer=null, trimStart=0, trimEnd=30, frameMode=false;
+function loadYTApi(){
+  if(window.YT&&window.YT.Player){ytApiReady=true;return;}
+  if(document.querySelector('script[src*="iframe_api"]'))return;
+  const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+  window.onYouTubeIframeAPIReady=()=>{ytApiReady=true;if(curProject)startPlayer();};
+}
+async function loadTemplates(){
+  if(templates.length)return templates;
+  try{const r=await api('/api/caption-templates');templates=r.templates||[];}catch(e){templates=[];}
+  return templates;
+}
+function tplById(id){return templates.find(t=>t.id===id)||templates[0];}
+function tplPreviewStyle(p){
+  if(!p)return '';
+  return `font-size:${p.fontSize};color:${p.color};background:${p.background};font-weight:${p.fontWeight};font-style:${p.fontStyle};text-shadow:${p.textShadow};font-family:${p.fontFamily}`;
+}
 function show(id){for(const s of ['dash','project','recipe','fix'])document.getElementById(s).style.display=s===id?'block':'none';
   document.querySelectorAll('nav button').forEach(b=>b.classList.remove('on'));
   if(id==='dash')load(); if(id==='recipe')loadRecipe(); if(id==='fix')loadFix();}
@@ -253,21 +291,29 @@ async function openP(id){
   cur=id;show('project');
   const {project:p}=await api('/api/projects/'+id);
   curProject=p;
+  await loadTemplates();
   const src=p.source_type==='drive'
     ? (p.drive_file_id?`https://drive.google.com/file/d/${p.drive_file_id}/view`:(p.source_url||'#'))
     : (p.source_url||'#');
   document.getElementById('pHead').innerHTML=`
     <h2 style="margin:0 0 4px">${esc(p.title)}</h2>
     <p class="note">${esc(p.channel||'')} · ${p.duration_sec?fmtTime(p.duration_sec):'—'} · ${p.clips.length} clips · ${p.source_type==='drive'?'Google Drive':p.source_type==='upload'?'Uploaded file':'YouTube'}</p>
+    ${p.is_live?`<span class="badge live">🔴 LIVE now</span>`:''}${p.live_status==='is_upcoming'?`<span class="badge gold">⏳ Not started yet</span>`:''}${p.live_status==='was_live'?`<span class="badge grey">Ended live (VOD)</span>`:''}
     ${p.fetch_error?`<p class="err">${esc(p.fetch_error)}</p>`:''}
     ${stageHtml(p)}${trafficHtml(p)}
     <div class="row"><a class="btn ghost small" href="${esc(src)}" target="_blank" rel="noopener">↗ Open source</a>
+    ${p.is_live?`<button class="btn small" onclick="liveClip()">🔴 Clip from live now</button>`:''}
+    ${p.live_status==='is_upcoming'?`<span class="note">This stream has not started yet — come back when it is live.</span>`:''}
     <button class="btn ghost small" onclick="exportPack()">⬇ Export clip pack</button>
     <button class="btn danger small" onclick="deleteProject()">Delete project</button></div>`;
   document.getElementById('pBody').innerHTML=`
     ${p.transcript_status==='needs_paste'?`<label>Paste transcript (backup only — automatic fetch failed)</label><textarea id="tr">${esc(p.transcript||'')}</textarea><div class="row"><button class="btn" onclick="saveTr()">Save transcript</button></div>`:''}
+    <div class="glass editor" id="editorBox"></div>
     <label>How many clips do you want? (1, 2, or any number — no limit)</label>
-    <input type="number" id="cnt" value="5" min="1" max="20" style="width:110px">
+    <div class="row">
+      ${[1,2,5,10].map(n=>`<button class="chip" id="chip-${n}" onclick="setCount(${n})">${n}</button>`).join('')}
+      <input type="number" id="cnt" value="5" min="1" style="width:110px" oninput="syncChips()">
+    </div>
     <div class="row"><button class="btn" onclick="findClips()">Make my clips</button></div>
     <div class="tabs">
       ${[['all','All'],['top','Top 80+'],['mp4','MP4 ready'],['needscut','Needs cut'],['posted','Posted']].map(([k,l])=>`<button class="${curFilter===k?'on':''}" onclick="setFilter('${k}')">${l}</button>`).join('')}
@@ -277,6 +323,7 @@ async function openP(id){
       <label>Start (seconds)</label><input type="number" id="ms" value="0" style="width:110px">
       <label>End (seconds)</label><input type="number" id="me" value="30" style="width:110px">
       <div class="row"><button class="btn ghost" onclick="addClip()">Add clip</button></div></div>`;
+  renderEditor(p);
 }
 function filteredClips(p){
   const clips=p.clips||[];
@@ -287,6 +334,149 @@ function filteredClips(p){
   return clips;
 }
 function setFilter(f){curFilter=f;if(cur)openP(cur);}
+
+/* ---------- CapCut-style editor + Frame select ---------- */
+function renderEditor(p){
+  const box=document.getElementById('editorBox');if(!box)return;
+  if(p.source_type!=='youtube'||!p.youtube_id){
+    box.innerHTML=`<h3 style="margin-top:0">🎬 CapCut-style editor</h3><p class="note">The full-video editor works with YouTube videos — play the whole video, drag the trim handles, and cut exactly the frames you want. Drive / uploaded videos open in their own app instead.</p>`;
+    return;
+  }
+  trimStart=0;trimEnd=Math.min(30,p.duration_sec||30);
+  box.innerHTML=`
+    <h3 style="margin-top:0">🎬 CapCut-style editor + Frame select</h3>
+    <p class="note">Play the full video, click the timeline to jump, drag the gold handles to trim. Hard cuts only — no zoom or pan.</p>
+    <div class="player-wrap"><div id="ytplayer"></div></div>
+    <p class="note" id="ytErr" style="display:none">YouTube is refusing to play this video inside the app — use the source link above, or pick times by hand below.</p>
+    <div class="timeline" id="tl">
+      <div class="trim" id="trimBar"></div>
+      ${(p.clips||[]).map(c=>`<div class="tclip" title="${esc(c.hook||'')}" style="left:${(c.start_sec/(p.duration_sec||1))*100}%;width:${Math.max(2,((c.end_sec-c.start_sec)/(p.duration_sec||1))*100)}%">${c.score||''}</div>`).join('')}
+      <div class="handle" id="hStart" title="Trim start"></div>
+      <div class="handle" id="hEnd" title="Trim end"></div>
+      <div class="thead" id="playhead" style="left:0%"></div>
+    </div>
+    <div class="row">
+      <span class="note">⏱ <span id="nowT">0:00</span> / ${fmtTime(p.duration_sec||0)}</span>
+      <label style="margin:0">Start</label><input type="number" id="ts" value="${trimStart}" step="0.1" style="width:90px" onchange="setTrim(+this.value,trimEnd)">
+      <label style="margin:0">End</label><input type="number" id="te" value="${trimEnd}" step="0.1" style="width:90px" onchange="setTrim(trimStart,+this.value)">
+    </div>
+    <div class="row">
+      <button class="btn ghost small" onclick="markFrame('start')">📍 Mark start frame</button>
+      <button class="btn ghost small" onclick="markFrame('end')">📍 Mark end frame</button>
+      <button class="btn small" onclick="makeClipFromFrames()">✂️ Make clip from these frames</button>
+    </div>
+    <div id="strip"></div>`;
+  loadYTApi();startPlayer();drawTimeline();loadStrip(p);
+  clearInterval(ytTimer);
+  ytTimer=setInterval(()=>{
+    if(ytPlayer&&ytPlayer.getCurrentTime){
+      const t=ytPlayer.getCurrentTime();
+      const el=document.getElementById('nowT');if(el)el.textContent=fmtTime(t);
+      const ph=document.getElementById('playhead');
+      if(ph&&p.duration_sec)ph.style.left=((t/p.duration_sec)*100)+'%';
+    }
+  },500);
+}
+function startPlayer(){
+  if(!ytApiReady||!curProject||!document.getElementById('ytplayer'))return;
+  try{
+    if(ytPlayer&&ytPlayer.destroy)ytPlayer.destroy();
+    ytPlayer=new YT.Player('ytplayer',{videoId:curProject.youtube_id,
+      playerVars:{rel:0},
+      events:{onError:()=>{const e=document.getElementById('ytErr');if(e)e.style.display='block';}}});
+  }catch(e){/* player unavailable — timeline still works by hand */}
+}
+function seekTo(t){
+  if(ytPlayer&&ytPlayer.seekTo){ytPlayer.seekTo(t,true);if(ytPlayer.pauseVideo)ytPlayer.pauseVideo();}
+}
+function drawTimeline(){
+  const p=curProject;if(!p||!p.duration_sec)return;
+  const tl=document.getElementById('tl');if(!tl)return;
+  const pct=v=>Math.max(0,Math.min(100,(v/p.duration_sec)*100));
+  const bar=document.getElementById('trimBar');if(bar){bar.style.left=pct(trimStart)+'%';bar.style.width=(pct(trimEnd)-pct(trimStart))+'%';}
+  const hs=document.getElementById('hStart');if(hs)hs.style.left=`calc(${pct(trimStart)}% - 7px)`;
+  const he=document.getElementById('hEnd');if(he)he.style.left=`calc(${pct(trimEnd)}% - 7px)`;
+  const ts=document.getElementById('ts');if(ts)ts.value=Math.round(trimStart*10)/10;
+  const te=document.getElementById('te');if(te)te.value=Math.round(trimEnd*10)/10;
+}
+function setTrim(s,e){
+  const p=curProject;if(!p||!p.duration_sec)return;
+  trimStart=Math.max(0,Math.min(s,p.duration_sec-1));
+  trimEnd=Math.max(trimStart+1,Math.min(e,p.duration_sec));
+  drawTimeline();
+}
+function markFrame(which){
+  let t=null;
+  if(ytPlayer&&ytPlayer.getCurrentTime)t=ytPlayer.getCurrentTime();
+  if(t==null){alert('Play the video first, then mark a frame.');return;}
+  if(which==='start')setTrim(t,trimEnd);else setTrim(trimStart,t);
+  seekTo(t);
+}
+async function makeClipFromFrames(){
+  if(!(trimEnd>trimStart)){alert('Mark a start frame and an end frame first.');return;}
+  try{
+    await api('/api/projects/'+cur+'/clips','POST',{start_sec:Math.round(trimStart*10)/10,end_sec:Math.round(trimEnd*10)/10,hook:'Frame-selected clip.'});
+    alert('Clip created from '+fmtTime(trimStart)+' to '+fmtTime(trimEnd)+'.');
+  }catch(e){alert(e.message);}
+  openP(cur);
+}
+async function loadStrip(p){
+  const box=document.getElementById('strip');if(!box)return;
+  try{
+    const {storyboard}=await api('/api/projects/'+p.id+'/storyboard');
+    if(!storyboard||(!storyboard.fragments?.length&&!(storyboard.rows&&storyboard.columns)))return;
+    const n=12, dur=p.duration_sec||1;
+    let html='<label>Frames across the video — tap one to jump there:</label><div class="strip">';
+    for(let i=0;i<n;i++){
+      const t=Math.round((i+0.5)/n*dur);
+      let style='';
+      if(storyboard.fragments?.length){
+        const img=storyboard.fragments[Math.min(storyboard.fragments.length-1,Math.floor(i/n*storyboard.fragments.length))];
+        style=`background-image:url('${img}');background-size:cover;background-position:center;`;
+      }else{
+        const total=storyboard.rows*storyboard.columns;
+        const cell=Math.min(total-1,Math.floor(i/n*total));
+        const row=Math.floor(cell/storyboard.columns), col=cell%storyboard.columns;
+        const px=storyboard.columns>1?(col/(storyboard.columns-1))*100:0;
+        const py=storyboard.rows>1?(row/(storyboard.rows-1))*100:0;
+        style=`background-image:url('${storyboard.url}');background-size:${storyboard.columns*100}% ${storyboard.rows*100}%;background-position:${px}% ${py}%;`;
+      }
+      html+=`<div class="thumb" style="${style}" title="${fmtTime(t)}" onclick="seekTo(${t})"></div>`;
+    }
+    box.innerHTML=html+'</div>';
+  }catch(e){/* storyboard is optional — player frames still work */}
+}
+// Timeline click-to-seek + handle dragging (delegated after render).
+document.addEventListener('pointerdown',e=>{
+  const tl=e.target.closest&&e.target.closest('#tl');if(!tl||!curProject)return;
+  const p=curProject;if(!p.duration_sec)return;
+  const rect=tl.getBoundingClientRect();
+  const toTime=x=>Math.max(0,Math.min(p.duration_sec,(x-rect.left)/rect.width*p.duration_sec));
+  if(e.target.classList.contains('handle')){
+    const which=e.target.id==='hStart'?'start':'end';
+    const move=ev=>{const t=toTime(ev.clientX);if(which==='start')setTrim(t,trimEnd);else setTrim(trimStart,t);};
+    const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);};
+    document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
+    e.preventDefault();return;
+  }
+  if(e.target.classList.contains('tclip'))return;
+  seekTo(toTime(e.clientX));
+});
+function setCount(n){const i=document.getElementById('cnt');if(i)i.value=n;syncChips();}
+function syncChips(){
+  const v=+document.getElementById('cnt').value;
+  [1,2,5,10].forEach(n=>{const b=document.getElementById('chip-'+n);if(b)b.classList.toggle('on',v===n);});
+}
+async function liveClip(){
+  let end=60,start=0;
+  if(ytPlayer&&ytPlayer.getCurrentTime){end=Math.floor(ytPlayer.getCurrentTime());start=Math.max(0,end-60);}
+  else{start=trimStart;end=trimEnd;}
+  try{
+    await api('/api/projects/'+cur+'/live-clip','POST',{start_sec:start,end_sec:end,hook:'Clipped from live.'});
+    alert('Recording the live stream and cutting '+fmtTime(start)+' → '+fmtTime(end)+'. It takes a few minutes — the clip appears below when done.');
+  }catch(e){alert(e.message);}
+  openP(cur);
+}
 function clipHtml(c){
   const caps=JSON.parse(c.captions_json||'[]');
   const tCaps=c.translated_captions_json?JSON.parse(c.translated_captions_json):null;
@@ -306,6 +496,15 @@ function clipHtml(c){
     <div class="caps" id="caps-${c.id}">${(tCaps||caps).map(x=>`<div>${esc(x)}</div>`).join('')||'<div class="note">No captions.</div>'}</div>
     <p class="note">${esc(c.hashtags||'')}</p>
     <div id="edit-${c.id}"></div>
+    <div class="row">
+      <span class="note">Caption template:</span>
+      <select onchange="setClipTemplate(${c.id},this.value)">${(templates.length?templates:[{id:'word-cut',name:'Word Cut'},{id:'neon',name:'Neon'},{id:'karaoke',name:'Karaoke'},{id:'pill',name:'Pill'},{id:'big-centre',name:'Big Centre'}]).map(t=>`<option value="${t.id}" ${(c.caption_template||'word-cut')===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select>
+      <span class="note">Caption offset (s):</span>
+      <input type="number" step="0.1" min="-5" max="5" value="${+(c.caption_offset||0)}" style="width:80px" onchange="setClipOffset(${c.id},this.value)" title="Nudge captions earlier (-) or later (+) in 0.1s steps">
+      <button class="btn ghost small" onclick="showTimed(${c.id})">🕐 Timed captions</button>
+      ${c.live_clip?`<span class="badge live">🔴 From live</span>`:''}
+    </div>
+    <div id="timed-${c.id}"></div>
     <div class="row">
       <select onchange="setClip(${c.id},'layout',this.value)" title="Reframe layout">
         <option value="full" ${c.layout==='full'?'selected':''}>Full frame</option>
@@ -335,7 +534,7 @@ async function saveTr(){await api('/api/projects/'+cur+'/transcript','POST',{tra
 async function findClips(){
   const count=+document.getElementById('cnt').value||5;
   try{const r=await api('/api/projects/'+cur+'/find-clips','POST',{count});
-    alert('Found '+r.created.length+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');
+    alert('Asked for '+r.requested+', found '+r.found+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');
   }catch(e){alert(e.message);}
   openP(cur);
 }
@@ -344,6 +543,24 @@ async function addClip(){
   catch(e){alert(e.message);} openP(cur);
 }
 async function setClip(id,f,v){await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{[f]:v});if(f==='status')openP(cur);}
+async function setClipTemplate(id,tpl){
+  await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{caption_template:tpl});
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(c)c.caption_template=tpl;
+}
+async function setClipOffset(id,v){
+  const off=Math.max(-5,Math.min(5,Math.round(parseFloat(v)*10)/10||0));
+  await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{caption_offset:off});
+  const c=(curProject.clips||[]).find(x=>x.id===id);if(c)c.caption_offset=off;
+}
+async function showTimed(id){
+  const box=document.getElementById('timed-'+id);
+  box.innerHTML='<p class="note">Loading timed captions…</p>';
+  try{
+    const r=await api('/api/projects/'+cur+'/clips/'+id+'/captions');
+    box.innerHTML=`<label style="margin-top:6px">Timed captions — each line lands on its own spoken moment (${r.timed?'from the transcript timestamps':'fallback timing — no transcript times found'}) · template: ${esc(tplById(r.template)?.name||r.template)} · offset: ${r.offset_sec}s</label>
+    <div class="caps">${r.cues.map(c=>`<div><b>${c.start.toFixed(1)}s → ${c.end.toFixed(1)}s</b> — ${esc(c.text)}</div>`).join('')||'<div class="note">No captions for this clip.</div>'}</div>`;
+  }catch(e){box.innerHTML='<p class="err">'+esc(e.message)+'</p>';}
+}
 async function renderClip(id){
   try{await api('/api/projects/'+cur+'/clips/'+id+'/render','POST',{});alert('Cutting your clip… it takes about a minute. The card will show MP4 ready when done.');}
   catch(e){alert(e.message);} setTimeout(()=>openP(cur),20000);
@@ -414,7 +631,7 @@ const RECIPE_FIELDS=[
   {k:'aiPicks',t:'AI picks',d:'How the AI chooses moments',type:'select',opts:['Auto','Manual']},
   {k:'clipLength',t:'Clip length',d:'How long each clip should be',type:'select',opts:[['auto','Auto (0–3m)'],['short','Short (15–60s)'],['15','15 seconds'],['30','30 seconds'],['60','60 seconds']]},
   {k:'captions',t:'Captions',d:'Burned-in word captions on every clip',type:'toggle'},
-  {k:'captionStyle',t:'Caption style',d:'How captions look',type:'select',opts:['Word Cut','Word Cut Alt','Marker Sweep','Negative Keywords','Karaoke']},
+  {k:'captionStyle',t:'Caption style',d:'How captions look — 35+ templates, tap one to preview it',type:'templates'},
   {k:'autoHook',t:'Auto hook',d:'AI writes a scroll-stopping hook',type:'toggle'},
   {k:'hookTemplate',t:'Headline style',d:'Auto hook template',type:'select',opts:['Classic','Editorial','Statement','Sunset']},
   {k:'motionGraphics',t:'Motion graphics',d:'Animated graphic overlays (Beta)',type:'toggle'},
@@ -429,14 +646,34 @@ const RECIPE_FIELDS=[
   {k:'eyeContact',t:'Eye Contact Correction',d:'For talking-head videos only',type:'toggle'},
   {k:'voiceDubbing',t:'Voice dubbing',d:'Dub clips in another voice (uses credits)',type:'toggle'},
   {k:'captionTranslation',t:'Caption translation',d:'Translate captions — Bengali ↔ English only',type:'toggle'},
+  {k:'uniqueLogo',t:'Logo watermark',d:'Burn the Clip Studio logo into every clip corner — ON by default, makes each clip yours',type:'toggle'},
+  {k:'uniqueTitleCard',t:'Title card',d:'Branded title card with the hook at the start (~1.5s) — ON by default',type:'toggle'},
+  {k:'uniqueEndCard',t:'End card',d:'“Clip Studio” end card (~1s) — ON by default',type:'toggle'},
+  {k:'uniqueReframe',t:'Unique reframe',d:'Every clip is reframed, never a plain raw crop — ON by default',type:'toggle'},
 ];
 async function loadRecipe(){
   const {settings}=await api('/api/recipe');recipe=settings;
+  await loadTemplates();
   document.getElementById('recipeForm').innerHTML=RECIPE_FIELDS.map(f=>{
     if(f.type==='toggle')return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><input type="checkbox" data-k="${f.k}" ${recipe[f.k]?'checked':''} onchange="saveRecipeField('${f.k}',this.checked)"></div>`;
+    if(f.type==='templates')return `<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,.06)"><b>${f.t}</b><span style="display:block;font-size:12px;color:var(--mut)">${f.d}</span><div class="tplgrid" id="tplGrid"></div></div>`;
     const opts=f.opts.map(o=>{const [v,l]=Array.isArray(o)?o:[o,o];return `<option value="${v}" ${recipe[f.k]===v?'selected':''}>${l}</option>`;}).join('');
     return `<div class="tog"><div><b>${f.t}</b><span>${f.d}</span></div><select data-k="${f.k}" onchange="saveRecipeField('${f.k}',this.value)">${opts}</select></div>`;
-  }).join('')+`<p class="note" style="margin-top:14px">Recommended ON by default: Captions (Word Cut), Auto hook (Classic), Speech cleanup. Everything else is OFF but kept here for later.</p>`;
+  }).join('')+`<p class="note" style="margin-top:14px">Recommended ON by default: Captions (Word Cut), Auto hook (Classic), Speech cleanup, and all four Unique formation switches. Everything else is OFF but kept here for later.</p>`;
+  renderTplGrid();
+}
+function renderTplGrid(){
+  const g=document.getElementById('tplGrid');if(!g)return;
+  const curTpl=recipe.captionTemplate||'word-cut';
+  g.innerHTML=templates.map(t=>`<div class="tpl ${t.id===curTpl?'on':''}" onclick="pickTemplate('${t.id}','${esc(t.name)}')">
+    <div class="prev" style="${tplPreviewStyle(t.preview)}">Your caption here</div>
+    <b>${esc(t.name)}</b><span>${esc(t.desc)}</span></div>`).join('')||'<p class="note">Templates could not be loaded.</p>';
+}
+async function pickTemplate(id,name){
+  recipe.captionTemplate=id;recipe.captionStyle=name;
+  await api('/api/recipe','POST',recipe);
+  document.getElementById('recipeSaved').textContent='Saved ✓ '+new Date().toLocaleTimeString();
+  renderTplGrid();
 }
 async function saveRecipeField(k,v){
   recipe[k]=v;
