@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:24-slim
 
 # ffmpeg for cutting / caption burn-in, python3 + pip for yt-dlp.
 RUN apt-get update \
