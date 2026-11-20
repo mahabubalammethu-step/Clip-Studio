@@ -80,6 +80,166 @@ addColumn('clips', 'duo_corner', "TEXT DEFAULT 'auto'");
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
+
+// ---- Credits paywall (no password lock) ----
+// OWNER (the user himself): unlimited, never pays, never sees a paywall.
+// Owner recognition is by device: the server has an OWNER_KEY env var.
+// The owner enters the key once per device ("Owner access"); the server
+// sets a long-lived signed httpOnly owner cookie on that device. The
+// cookie is stateless — HMAC-SHA256 of the owner key over a fixed string
+// — so it survives restarts on Render's ephemeral disk, and changing the
+// key invalidates old cookies. The key lives only in the environment —
+// never in a file, never in GitHub, never logged, never returned.
+// VISITORS (no owner cookie): creating a project, finding clips, cutting
+// a clip and translating cost credits (see COSTS). Downloading a cut MP4
+// is free. Everything is enforced server-side (402 when short).
+// When OWNER_KEY is not set, the site stays open exactly as before —
+// the paywall never locks the owner out by accident.
+// BUYING CREDITS: bKash only. The panel shows a QR image (public/
+// bkash-qr.png — a placeholder until the owner adds it) and never shows
+// a bKash number or name as text. The visitor pays, enters the bKash
+// transaction ID and picks a pack; the request is stored PENDING and the
+// owner approves it manually — there is no bKash merchant API, so no
+// automatic verification is possible and none is faked.
+const COSTS = { createProject: 1, findClips: 1, render: 2, translate: 1, download: 0 };
+const CREDIT_PACKS = [
+  { credits: 5, price: 50 },
+  { credits: 10, price: 100 },
+  { credits: 20, price: 200 },
+];
+const OWNER_KEY = process.env.OWNER_KEY || '';
+db.exec(`
+CREATE TABLE IF NOT EXISTS device_credits (
+  device_id TEXT PRIMARY KEY,
+  credits INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT, pack_credits INTEGER, price INTEGER,
+  txn_id TEXT, status TEXT DEFAULT 'pending',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+`);
+function ownerCookieValue() {
+  return crypto.createHmac('sha256', OWNER_KEY).update('clip-studio-owner').digest('hex');
+}
+function getCookie(req, name) {
+  const m = String(req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + name + '=([A-Za-z0-9_\\-\\.]+)'));
+  return m ? m[1] : null;
+}
+function appendCookie(res, str) {
+  const prev = res.getHeader('Set-Cookie');
+  res.setHeader('Set-Cookie', prev ? [].concat(prev, str) : str);
+}
+function isOwner(req) {
+  if (!OWNER_KEY) return false;
+  const v = getCookie(req, 'clip_owner');
+  if (!v) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(v, 'hex'), Buffer.from(ownerCookieValue(), 'hex'));
+  } catch { return false; }
+}
+function visitorDevice(req) {
+  return getCookie(req, 'clip_device') || req._newDevice || null;
+}
+// Every first visit gets a random device ID in a long-lived cookie, so a
+// visitor's credits follow their device (phone, PC, Mac, Linux).
+app.use((req, res, next) => {
+  if (!getCookie(req, 'clip_device')) {
+    const id = crypto.randomUUID().replace(/-/g, '');
+    req._newDevice = id;
+    appendCookie(res, `clip_device=${id}; HttpOnly; Path=/; SameSite=Lax; Max-Age=31536000`);
+  }
+  next();
+});
+function getBalance(device) {
+  if (!device) return 0;
+  const row = db.prepare('SELECT credits FROM device_credits WHERE device_id=?').get(device);
+  return row ? row.credits : 0;
+}
+// Charge a visitor for a paid action. Returns true when the action may
+// proceed (paywall off, owner, or enough credits — deducted now).
+// Returns false after already sending a 402 when the visitor is short.
+function charge(req, res, cost) {
+  if (!OWNER_KEY) return true; // paywall off — site is open
+  if (isOwner(req)) return true; // owner never pays
+  const device = visitorDevice(req);
+  const bal = getBalance(device);
+  if (bal < cost) {
+    res.status(402).json({ error: `Not enough credits — this costs ${cost} credit${cost > 1 ? 's' : ''} and you have ${bal}. Buy credits to continue.`, needed: cost, balance: bal });
+    return false;
+  }
+  db.prepare(`INSERT INTO device_credits (device_id, credits) VALUES (?, ?) ON CONFLICT(device_id) DO UPDATE SET credits=credits-?`)
+    .run(device, -cost, cost);
+  return true;
+}
+function requireOwner(req, res) {
+  if (!OWNER_KEY || !isOwner(req)) { res.status(403).json({ error: 'Owner only.' }); return false; }
+  return true;
+}
+app.get('/api/youtube-auth', (req, res) => res.json({ cookies_configured: !!YT_COOKIES_FILE }));
+app.get('/api/credits', (req, res) => {
+  res.json({
+    paywall: !!OWNER_KEY,
+    owner: isOwner(req),
+    credits: isOwner(req) ? null : getBalance(visitorDevice(req)),
+    packs: CREDIT_PACKS,
+    costs: COSTS,
+  });
+});
+app.post('/api/owner-login', (req, res) => {
+  if (!OWNER_KEY) return res.status(400).json({ error: 'Owner access is not set up — the site is open.' });
+  const given = String(req.body?.key || '');
+  const ok = crypto.timingSafeEqual(
+    crypto.createHash('sha256').update(given).digest(),
+    crypto.createHash('sha256').update(OWNER_KEY).digest());
+  if (!ok) return res.status(401).json({ error: 'Wrong owner key.' });
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+  appendCookie(res, `clip_owner=${ownerCookieValue()}; HttpOnly; Path=/; SameSite=Lax; Max-Age=31536000${secure ? '; Secure' : ''}`);
+  res.json({ ok: true });
+});
+app.post('/api/credits/buy', (req, res) => {
+  if (!OWNER_KEY) return res.status(400).json({ error: 'Credit payments are off — the site is open.' });
+  const device = visitorDevice(req);
+  if (!device) return res.status(400).json({ error: 'No device yet — reload the page and try again.' });
+  const pack = CREDIT_PACKS.find((p) => p.credits === parseInt(req.body?.pack, 10));
+  const txn = String(req.body?.txn_id || '').trim().slice(0, 64);
+  if (!pack) return res.status(400).json({ error: 'Pick a credit pack first.' });
+  if (!txn) return res.status(400).json({ error: 'Enter the bKash transaction ID.' });
+  const dup = db.prepare('SELECT id FROM payments WHERE txn_id=? AND status != ?').get(txn, 'rejected');
+  if (dup) return res.status(400).json({ error: 'This transaction ID was already submitted.' });
+  const r = db.prepare('INSERT INTO payments (device_id, pack_credits, price, txn_id, status) VALUES (?,?,?,?,?)')
+    .run(device, pack.credits, pack.price, txn, 'pending');
+  res.json({ ok: true, id: r.lastInsertRowid, note: 'Pending — the owner approves it after checking the payment.' });
+});
+app.get('/api/credits/mine', (req, res) => {
+  const device = visitorDevice(req);
+  const rows = device ? db.prepare('SELECT * FROM payments WHERE device_id=? ORDER BY id DESC').all(device) : [];
+  res.json({ payments: rows });
+});
+app.get('/api/credits/payments', (req, res) => {
+  if (!requireOwner(req, res)) return;
+  res.json({ payments: db.prepare('SELECT * FROM payments ORDER BY id DESC').all() });
+});
+app.post('/api/credits/payments/:id/approve', (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const row = db.prepare('SELECT * FROM payments WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Payment not found.' });
+  if (row.status !== 'pending') return res.status(400).json({ error: 'Already decided.' });
+  db.prepare(`INSERT INTO device_credits (device_id, credits) VALUES (?, ?) ON CONFLICT(device_id) DO UPDATE SET credits=credits+excluded.credits`)
+    .run(row.device_id, row.pack_credits);
+  db.prepare(`UPDATE payments SET status='approved' WHERE id=?`).run(row.id);
+  res.json({ ok: true });
+});
+app.post('/api/credits/payments/:id/reject', (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const row = db.prepare('SELECT * FROM payments WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Payment not found.' });
+  if (row.status !== 'pending') return res.status(400).json({ error: 'Already decided.' });
+  db.prepare(`UPDATE payments SET status='rejected' WHERE id=?`).run(row.id);
+  res.json({ ok: true });
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/renders', express.static(RENDER_DIR));
 
@@ -88,6 +248,31 @@ app.use('/renders', express.static(RENDER_DIR));
 // works from a server, so every yt-dlp call uses it. (The TV client was
 // tried and is worse: SABR-only, no downloadable video formats.)
 const YT_CLIENT = ['--extractor-args', 'youtube:player_client=android'];
+
+// YouTube login cookies — the fix for YouTube blocking this server.
+// The user sets YT_COOKIES_B64 in Render as an environment variable
+// (base64 of a Netscape cookies.txt exported from their own browser).
+// It is decoded ONCE at startup into a file outside the repo, never
+// logged, never returned by any API, never committed. Without it, every
+// yt-dlp call behaves exactly as before.
+let YT_COOKIES_FILE = null;
+let YT_COOKIES = [];
+try {
+  const b64 = (process.env.YT_COOKIES_B64 || '').trim();
+  if (b64) {
+    const text = Buffer.from(b64, 'base64').toString('utf8');
+    if (text.includes('youtube.com') || text.includes('# Netscape HTTP Cookie File')) {
+      YT_COOKIES_FILE = path.join(DATA_DIR, '.yt-cookies.txt');
+      fs.writeFileSync(YT_COOKIES_FILE, text, { mode: 0o600 });
+      YT_COOKIES = ['--cookies', YT_COOKIES_FILE];
+      console.log('YouTube cookies configured — yt-dlp will use the logged-in session.');
+    } else {
+      console.error('YT_COOKIES_B64 does not look like a cookies file — ignoring it.');
+    }
+  }
+} catch (e) {
+  console.error('YT_COOKIES_B64 could not be decoded — ignoring it.');
+}
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve) => {
@@ -234,7 +419,7 @@ function templatePreviewCss(t) {
 
 // ---- YouTube metadata + captions via yt-dlp (server-side, no paste needed) ----
 async function fetchYouTube(url) {
-  const meta = await run('yt-dlp', [...YT_CLIENT, '-j', '--no-playlist', url], { timeout: 60000 });
+  const meta = await run('yt-dlp', [...YT_CLIENT, ...YT_COOKIES, '-j', '--no-playlist', url], { timeout: 60000 });
   if (meta.code !== 0) throw new Error('yt-dlp could not read this video (it may be private, age-restricted or blocking downloads).');
   let info = {};
   try { info = JSON.parse(meta.out); } catch { throw new Error('Could not parse video info from yt-dlp.'); }
@@ -242,7 +427,7 @@ async function fetchYouTube(url) {
   // Auto captions (and manual subs if present), English + Bengali preferred.
   const id = info.id || youtubeId(url) || twitchId(url) || kickId(url) || crypto.randomUUID().slice(0, 8);
   const subOut = path.join(SUB_DIR, id);
-  await run('yt-dlp', [...YT_CLIENT, '--skip-download', '--write-auto-subs', '--write-subs',
+  await run('yt-dlp', [...YT_CLIENT, ...YT_COOKIES, '--skip-download', '--write-auto-subs', '--write-subs',
     '--sub-format', 'vtt', '--sub-lang', 'en,bn.*', '-o', subOut, url], { timeout: 120000 });
 
   let cues = [];
@@ -287,7 +472,7 @@ async function fetchYouTube(url) {
 
 // ---- Clip scoring: Gemini when a key is set, else transparent heuristic ----
 const HOOK_WORDS = ['never', 'secret', 'mistake', 'stop', 'why', 'how', 'best', 'worst', 'free', 'truth', 'nobody', 'everyone', 'warning', 'shocking', 'insane', 'crazy', 'first', 'last', 'always', 'only', 'kintu', 'keno', 'kivabe', 'kokhono', 'sotti'];
-function heuristicClips(cues, wanted, durationSec, minLen, maxLen) {
+function heuristicClips(cues, wanted, durationSec, minLen, maxLen, moments) {
   const sentences = [];
   for (const c of cues) {
     for (const part of c.text.split(/(?<=[.!?।])\s+/)) {
@@ -295,10 +480,14 @@ function heuristicClips(cues, wanted, durationSec, minLen, maxLen) {
     }
   }
   if (!sentences.length) return [];
+  // "Moments to include": words from the user's prompt boost matching
+  // sentences, so the requested moments get picked first.
+  const momentWords = String(moments || '').toLowerCase().split(/[^a-z0-9\u0980-\u09FF]+/).filter((w) => w.length >= 4);
   const scored = sentences.map((s, i) => {
     let score = 50;
     const low = s.text.toLowerCase();
     for (const w of HOOK_WORDS) if (low.includes(w)) score += 4;
+    for (const w of momentWords) if (low.includes(w)) score += 8;
     if (/\d/.test(s.text)) score += 5;
     if (/[?!]/.test(s.text)) score += 3;
     if (s.text.length > 60 && s.text.length < 220) score += 4;
@@ -324,11 +513,12 @@ function heuristicClips(cues, wanted, durationSec, minLen, maxLen) {
   return picked.sort((a, b) => b.score - a.score);
 }
 
-async function geminiClips(cues, wanted, minLen, maxLen) {
+async function geminiClips(cues, wanted, minLen, maxLen, moments) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
   const excerpt = transcriptToLines(cues).slice(0, 12000);
-  const prompt = `You score viral short-video moments from a transcript with [m:ss] timestamps. Return ONLY a JSON array, max ${wanted} items, each {"start_sec":number,"end_sec":number,"score":0-99,"hook":"short hook","captions":["line"],"hashtags":["#x"]}. Clips ${minLen}-${maxLen}s, non-overlapping, best hook first.\n\n${excerpt}`;
+  const momentsLine = moments ? `Moments to include: ${moments}\n` : '';
+  const prompt = `You score viral short-video moments from a transcript with [m:ss] timestamps. Return ONLY a JSON array, max ${wanted} items, each {"start_sec":number,"end_sec":number,"score":0-99,"hook":"short hook","captions":["line"],"hashtags":["#x"]}. Clips ${minLen}-${maxLen}s, non-overlapping, best hook first.\n${momentsLine}\n${excerpt}`;
   const res = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + encodeURIComponent(key),
     { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -341,22 +531,22 @@ async function geminiClips(cues, wanted, minLen, maxLen) {
   return JSON.parse(json[0]);
 }
 
-async function scoreClips(project, wanted, minLen, maxLen) {
+async function scoreClips(project, wanted, minLen, maxLen, moments) {
   const cues = cuesFromText(project.transcript);
   const ai = recipeSettings();
   // Gemini only runs when the user picked it in Settings → AI. Otherwise the
   // built-in heuristic scores — and the reply says so honestly.
   if (ai.aiEngine === 'gemini') {
     if (!process.env.GEMINI_API_KEY) {
-      return { engine: 'heuristic', note: 'Gemini is selected in Settings → AI but no GEMINI_API_KEY is set — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
+      return { engine: 'heuristic', note: 'Gemini is selected in Settings → AI but no GEMINI_API_KEY is set — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen, moments) };
     }
     try {
-      const out = await geminiClips(cues, wanted, minLen, maxLen);
+      const out = await geminiClips(cues, wanted, minLen, maxLen, moments);
       if (Array.isArray(out) && out.length) return { engine: 'gemini', clips: out };
     } catch (e) { /* fall through to heuristic, and say so */ }
-    return { engine: 'heuristic', note: 'Gemini call failed — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
+    return { engine: 'heuristic', note: 'Gemini call failed — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen, moments) };
   }
-  return { engine: 'heuristic', note: null, clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
+  return { engine: 'heuristic', note: null, clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen, moments) };
 }
 
 // ---- Caption rendering: each cue keeps its OWN timestamp (caption sync) ----
@@ -446,10 +636,13 @@ function wrapHook(text, per = 26) {
 }
 function writeCardAss(text, file, playW, playH, opts = {}) {
   // A centred card (title card / end card): big text on a dark card.
+  // Escape each line separately so the \N line breaks from wrapHook stay
+  // real line breaks instead of printing as stray backslashes.
+  const safeText = String(text || '').split('\\N').map((l) => assEscape(l)).join('\\N');
   const size = opts.size || Math.round(playW * 0.085);
   const color = opts.color || '#FFC24B';
   const sub = opts.sub || '';
-  const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playW}\nPlayResY: ${playH}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Card,Noto Sans Bengali,${size},${assColor(color)},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,5,60,60,0,1\nStyle: Brand,Noto Sans Bengali,${Math.round(playW * 0.038)},${assColor('#FFFFFF')},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,40,40,${Math.round(playH * 0.05)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:10.00,Card,,0,0,0,,${assEscape(text)}\n${sub ? `Dialogue: 0,0:00:00.00,0:00:10.00,Brand,,0,0,0,,${assEscape(sub)}\n` : ''}`;
+  const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playW}\nPlayResY: ${playH}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Card,Noto Sans Bengali,${size},${assColor(color)},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,5,60,60,0,1\nStyle: Brand,Noto Sans Bengali,${Math.round(playW * 0.038)},${assColor('#FFFFFF')},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,40,40,${Math.round(playH * 0.05)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:10.00,Card,,0,0,0,,${safeText}\n${sub ? `Dialogue: 0,0:00:00.00,0:00:10.00,Brand,,0,0,0,,${assEscape(sub)}\n` : ''}`;
   fs.writeFileSync(file, ass);
 }
 
@@ -658,7 +851,7 @@ async function finishRender(srcPath, project, clip, recipe) {
 
 async function renderClipJob(project, clip) {
   const srcBase = path.join(RENDER_DIR, `src-${clip.id}`);
-  const dl = await run('yt-dlp', [...YT_CLIENT, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
+  const dl = await run('yt-dlp', [...YT_CLIENT, ...YT_COOKIES, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
     '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
     '-o', srcBase + '.%(ext)s', project.source_url], { timeout: 300000 });
   // yt-dlp names the file by actual container (.webm/.mp4/.mkv) — find it.
@@ -676,7 +869,7 @@ async function renderClipJob(project, clip) {
 async function renderLiveClipJob(project, clip) {
   // Live stream: record from the start of the stream and cut the range.
   const srcBase = path.join(RENDER_DIR, `live-${clip.id}`);
-  const dl = await run('yt-dlp', [...YT_CLIENT, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
+  const dl = await run('yt-dlp', [...YT_CLIENT, ...YT_COOKIES, '-f', 'bestvideo[height<=720]+bestaudio/best/best',
     '--live-from-start', '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
     '-o', srcBase + '.%(ext)s', project.source_url], { timeout: 600000 });
   const srcPath = fs.readdirSync(RENDER_DIR)
@@ -716,6 +909,7 @@ app.get('/api/projects', (req, res) => {
 
 app.post('/api/projects', async (req, res) => {
   try {
+    if (!charge(req, res, COSTS.createProject)) return; // creating a project costs 1 credit
     const { url, sourceType, driveUrl, fileName, fileSizeBytes, durationSec } = req.body || {};
     if (sourceType === 'drive') {
       const fid = driveFileId(driveUrl || url || '');
@@ -812,7 +1006,9 @@ app.post('/api/projects/:id/find-clips', async (req, res) => {
     // range is always sane: min 5–120s, max min–180s.
     const minLen = Math.max(5, Math.min(120, parseInt(req.body?.min_sec ?? req.body?.minSec ?? 15, 10) || 15));
     const maxLen = Math.max(minLen, Math.min(180, parseInt(req.body?.max_sec ?? req.body?.maxSec ?? 45, 10) || 45));
-    const { engine, note, clips } = await scoreClips(p, wanted, minLen, maxLen);
+    const moments = String(req.body?.moments || '').slice(0, 200);
+    if (!charge(req, res, COSTS.findClips)) return; // finding clips costs 1 credit
+    const { engine, note, clips } = await scoreClips(p, wanted, minLen, maxLen, moments);
     const ins = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags) VALUES (?,?,?,?,?,?,?)`);
     const created = [];
     for (const c of clips) {
@@ -877,6 +1073,7 @@ app.post('/api/projects/:id/clips/:clipId/translate', async (req, res) => {
   const c = db.prepare('SELECT * FROM clips WHERE id=? AND project_id=?').get(req.params.clipId, req.params.id);
   if (!c) return res.status(404).json({ error: 'Clip not found.' });
   if (!process.env.GEMINI_API_KEY) return res.status(400).json({ error: 'Translation needs GEMINI_API_KEY — set it in the environment, or keep the original captions.' });
+  if (!charge(req, res, COSTS.translate)) return; // translating costs 1 credit
   const caps = JSON.parse(c.captions_json || '[]');
   const text = [c.hook, ...caps].join('\n');
   const isBn = /[\u0980-\u09FF]/.test(text);
@@ -903,6 +1100,7 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
   if (p.source_type !== 'youtube' && p.source_type !== 'twitch' && p.source_type !== 'kick')
     return res.status(400).json({ error: 'Auto-cut works from YouTube, Twitch and Kick links only — Drive and uploaded videos preview in their own app instead.' });
   if (c.render_status === 'rendering') return res.json({ clip: c, note: 'Already cutting.' });
+  if (!charge(req, res, COSTS.render)) return; // cutting a clip costs 2 credits
   db.prepare(`UPDATE clips SET render_status='rendering', render_error=NULL WHERE id=?`).run(c.id);
   renderClipJob(p, c).then((info) => {
     db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(info.file, c.id);
@@ -940,6 +1138,7 @@ app.post('/api/projects/:id/live-clip', async (req, res) => {
     return res.status(400).json({ error: 'This video is not a live stream right now.' });
   const { start_sec, end_sec, hook } = req.body || {};
   if (!(end_sec > start_sec)) return res.status(400).json({ error: 'End time must be after start time.' });
+  if (!charge(req, res, COSTS.render)) return; // cutting a live clip costs 2 credits
   const r = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags, live_clip) VALUES (?,?,?,?,?,'[]','',1)`)
     .run(p.id, start_sec, end_sec, 0, hook || 'Clipped from live.');
   const clip = db.prepare('SELECT * FROM clips WHERE id=?').get(r.lastInsertRowid);
@@ -956,6 +1155,10 @@ app.post('/api/projects/:id/live-clip', async (req, res) => {
 const DEFAULT_RECIPE = {
   recipe: 'Clip long video', brandKit: 'No brand kit',
   clipping: true, aiPicks: 'Auto', clipLength: 'auto',
+  // Opus-style create flow: AI picks range and clip-length range map onto
+  // the existing clip count and min/max length (see PICKS_MAP / LEN_MAP).
+  aiPicksRange: 'Auto', clipLengthRange: 'auto', customMin: 15, customMax: 45,
+  momentsPrompt: '', hookType: 'Headline',
   aiEngine: 'heuristic', // Settings → AI: 'heuristic' (built-in, always ready) or 'gemini'
   captions: true, captionStyle: 'Word Cut', captionTemplate: 'word-cut',
   autoHook: true, hookTemplate: 'Classic',
@@ -1102,10 +1305,15 @@ app.post('/api/projects/:id/clips/:clipId/hooks', (req, res) => {
   const caps = JSON.parse(c.captions_json || '[]');
   const firstLine = (caps[0] || c.hook || '').trim();
   const hook = (c.hook || firstLine).trim();
+  // Hook type (from the create flow): "Viral hook" leans on a question and
+  // a "watch till the end" nudge; "Headline" keeps clean statements.
+  const viral = (recipeSettings().hookType || 'Headline') === 'Viral hook';
   const variants = [
     hook,
     firstLine && firstLine !== hook ? firstLine : hook + ' — watch till the end.',
-    /[?]$/.test(hook) ? hook : hook.replace(/[.!।]?$/, '') + '?',
+    viral
+      ? (/[?]$/.test(hook) ? hook : hook.replace(/[.!।]?$/, '') + '?')
+      : hook.replace(/[?]+$/, '.'),
   ].filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 3);
   res.json({ hooks: variants });
 });
