@@ -11,11 +11,20 @@ const path = require('path');
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
 
+// yt-dlp is pip-installed into ~/.local/bin on dev machines; on Render the
+// Dockerfile installs it system-wide. Make both locations visible.
+for (const d of ['/home/hatch/.local/bin', '/root/.local/bin', '/usr/local/bin']) {
+  if (fs.existsSync(d) && !String(process.env.PATH || '').split(':').includes(d)) {
+    process.env.PATH = (process.env.PATH || '') + ':' + d;
+  }
+}
+
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = '0.0.0.0';
 const DATA_DIR = path.join(__dirname, 'data');
 const RENDER_DIR = path.join(__dirname, 'renders');
 const SUB_DIR = path.join(DATA_DIR, 'subs');
+const LOGO_PATH = path.join(__dirname, 'public', 'logo.png');
 for (const d of [DATA_DIR, RENDER_DIR, SUB_DIR]) fs.mkdirSync(d, { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'clipstudio.db'));
@@ -50,6 +59,19 @@ CREATE TABLE IF NOT EXISTS fix_requests (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 `);
+// Lightweight migrations for columns added after the first deploy.
+function addColumn(table, col, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('projects', 'live_status', "TEXT DEFAULT 'not_live'");
+addColumn('projects', 'is_live', 'INTEGER DEFAULT 0');
+addColumn('projects', 'storyboard_json', 'TEXT');
+addColumn('projects', 'transcript_cues_json', 'TEXT');
+addColumn('clips', 'caption_offset', 'REAL DEFAULT 0');
+addColumn('clips', 'caption_template', "TEXT DEFAULT 'word-cut'");
+addColumn('clips', 'captions_timed_json', 'TEXT');
+addColumn('clips', 'live_clip', 'INTEGER DEFAULT 0');
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -67,7 +89,6 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-function esc(s) { return String(s ?? '').replace(/'/g, "''"); }
 function youtubeId(url) {
   const m = String(url || '').match(/(?:v=|youtu\.be\/|live\/|shorts\/)([A-Za-z0-9_-]{6,})/);
   return m ? m[1] : null;
@@ -80,6 +101,11 @@ function fmtTime(s) {
   s = Math.max(0, Math.round(s || 0));
   const m = Math.floor(s / 60), sec = s % 60;
   return m + ':' + String(sec).padStart(2, '0');
+}
+function decodeEntities(s) {
+  // YouTube captions (and pasted VTT text) encode > as &gt; etc. — decode so
+  // burned-in captions show the real characters, never "&gt;".
+  return String(s || '').replace(/&amp;/g, '&').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 function parseVtt(text) {
   // Returns [{start, end, text}] from a WebVTT caption file.
@@ -102,6 +128,87 @@ function parseVtt(text) {
 }
 function transcriptToLines(cues) {
   return cues.map((c) => `[${fmtTime(c.start)}] ${c.text}`).join('\n');
+}
+function cuesFromText(text) {
+  // Parse [m:ss] markers anywhere in a transcript into timed cues.
+  // End = next cue's start (or +5s for the last one).
+  const cues = [];
+  const re = /\[(\d+):(\d+)\]\s*([^\[]*)/g;
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) {
+    const t = decodeEntities(m[3].trim());
+    if (t) cues.push({ start: +m[1] * 60 + +m[2], end: +m[1] * 60 + +m[2] + 5, text: t });
+  }
+  for (let i = 0; i < cues.length - 1; i++) cues[i].end = Math.min(cues[i + 1].start, cues[i].start + 12);
+  return cues;
+}
+
+// ---- Caption templates: 35+ named ASS styles ----
+// Colours are #RRGGBB; converted to ASS &H00BBGGRR at write time.
+// align: ASS alignment (1 bottom-left, 2 bottom-centre, 3 bottom-right,
+// 5 middle-centre, 8 top-centre). borderStyle 1 = outline+shadow, 3 = box.
+function T(id, name, desc, s) {
+  return { id, name, desc, ...s };
+}
+const CAPTION_TEMPLATES = [
+  T('word-cut', 'Word Cut', 'Classic white, black outline, bottom', { font: 'Noto Sans Bengali', size: 44, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 120 }),
+  T('word-cut-alt', 'Word Cut Alt', 'Thicker outline, slight shadow', { font: 'Noto Sans Bengali', size: 46, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 1, align: 2, marginV: 120 }),
+  T('marker-sweep', 'Marker Sweep', 'Warm yellow sweep text', { font: 'Noto Sans Bengali', size: 48, color: '#FFC24B', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('negative-keywords', 'Negative Keywords', 'Black text on a yellow box', { font: 'Noto Sans Bengali', size: 44, color: '#111111', outlineColor: '#FFC24B', backColor: '#FFC24B', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('karaoke', 'Karaoke', 'Gold words, sung word by word', { font: 'Noto Sans Bengali', size: 46, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 120, karaoke: true }),
+  T('bold-pop', 'Bold Pop', 'Huge and loud', { font: 'Noto Sans Bengali', size: 60, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 4, shadow: 2, align: 2, marginV: 110 }),
+  T('outline', 'Outline', 'Heavy black outline', { font: 'Noto Sans Bengali', size: 48, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 5, shadow: 0, align: 2, marginV: 120 }),
+  T('shadow', 'Shadow', 'Long soft shadow', { font: 'Noto Sans Bengali', size: 46, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 1, shadow: 4, align: 2, marginV: 120 }),
+  T('pill', 'Pill', 'White text in a dark pill box', { font: 'Noto Sans Bengali', size: 42, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 100 }),
+  T('neon', 'Neon', 'Glowing cyan neon', { font: 'Noto Sans Bengali', size: 46, color: '#00E5FF', outlineColor: '#3B0764', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 2, align: 2, marginV: 120 }),
+  T('minimal', 'Minimal', 'Small and quiet', { font: 'Noto Sans Bengali', size: 32, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: false, borderStyle: 1, outline: 1, shadow: 0, align: 2, marginV: 90 }),
+  T('big-centre', 'Big Centre', 'Huge text in the middle', { font: 'Noto Sans Bengali', size: 64, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 1, align: 5, marginV: 0 }),
+  T('bottom-bar', 'Bottom Bar', 'Yellow text on a black bar', { font: 'Noto Sans Bengali', size: 44, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 60 }),
+  T('top-bar', 'Top Bar', 'Captions at the top', { font: 'Noto Sans Bengali', size: 44, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 8, marginV: 60 }),
+  T('highlight-word', 'Highlight Word', 'Bright yellow, hard to miss', { font: 'Noto Sans Bengali', size: 48, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('two-line', 'Two-Line', 'Caption split over two lines', { font: 'Noto Sans Bengali', size: 40, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 120, twoLine: true }),
+  T('classic-white', 'Classic White', 'Plain white, thin outline', { font: 'Noto Sans Bengali', size: 40, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: false, borderStyle: 1, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('yellow-punch', 'Yellow Punch', 'Big yellow punch text', { font: 'Noto Sans Bengali', size: 52, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 1, align: 2, marginV: 120 }),
+  T('red-alert', 'Red Alert', 'Urgent red text', { font: 'Noto Sans Bengali', size: 48, color: '#FF3B30', outlineColor: '#FFFFFF', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('gold-title', 'Gold Title', 'Rich gold, like a title card', { font: 'Noto Sans Bengali', size: 54, color: '#FFC24B', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('green-screen', 'Green Screen', 'Fresh green text', { font: 'Noto Sans Bengali', size: 46, color: '#3DDC84', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 120 }),
+  T('blue-glow', 'Blue Glow', 'Cool blue with a soft glow', { font: 'Noto Sans Bengali', size: 46, color: '#7DD3FC', outlineColor: '#0C2D48', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 2, align: 2, marginV: 120 }),
+  T('pink-pop', 'Pink Pop', 'Bright pink pop', { font: 'Noto Sans Bengali', size: 48, color: '#FF7AD9', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('mono-type', 'Mono Type', 'Typewriter monospace', { font: 'DejaVu Sans Mono', size: 42, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: false, borderStyle: 1, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('upper-case', 'Upper Case', 'All caps, bold', { font: 'Noto Sans Bengali', size: 46, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 120, uppercase: true }),
+  T('lower-third', 'Lower Third', 'News-style, bottom left', { font: 'Noto Sans Bengali', size: 40, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 1, marginV: 80 }),
+  T('centre-box', 'Centre Box', 'Boxed text in the middle', { font: 'Noto Sans Bengali', size: 48, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 5, marginV: 0 }),
+  T('edge-glow', 'Edge Glow', 'White with a glowing edge', { font: 'Noto Sans Bengali', size: 46, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 3, align: 2, marginV: 120 }),
+  T('soft-blur', 'Soft Blur', 'Soft italic, gentle shadow', { font: 'Noto Sans Bengali', size: 42, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: true, borderStyle: 1, outline: 1, shadow: 2, align: 2, marginV: 120 }),
+  T('comic', 'Comic', 'Loud comic-book yellow', { font: 'Noto Sans Bengali', size: 50, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 2, align: 2, marginV: 120 }),
+  T('news-ticker', 'News Ticker', 'Small bar at the very bottom', { font: 'Noto Sans Bengali', size: 38, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 40 }),
+  T('story-caption', 'Story Caption', 'Higher up, like a story', { font: 'Noto Sans Bengali', size: 40, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 0, align: 2, marginV: 200 }),
+  T('clean-white', 'Clean White', 'No bold, no shadow, just clean', { font: 'Noto Sans Bengali', size: 44, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: false, borderStyle: 1, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('dark-mode', 'Dark Mode', 'Black text on a white box', { font: 'Noto Sans Bengali', size: 44, color: '#111111', outlineColor: '#FFFFFF', backColor: '#FFFFFF', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('retro-tv', 'Retro TV', 'Green terminal text', { font: 'DejaVu Sans Mono', size: 44, color: '#39FF14', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 120 }),
+  T('bold-yellow', 'Bold Yellow', 'Very big yellow', { font: 'Noto Sans Bengali', size: 56, color: '#FFD60A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 1, align: 2, marginV: 120 }),
+  T('white-outline', 'White Outline', 'Thick outline, no shadow', { font: 'Noto Sans Bengali', size: 48, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 4, shadow: 0, align: 2, marginV: 120 }),
+  T('black-bar', 'Black Bar', 'White on a full black bar', { font: 'Noto Sans Bengali', size: 46, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 3, outline: 1, shadow: 0, align: 2, marginV: 50 }),
+  T('fire-text', 'Fire Text', 'Hot orange flame text', { font: 'Noto Sans Bengali', size: 52, color: '#FF6A1A', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 1, align: 2, marginV: 120 }),
+  T('ice-text', 'Ice Text', 'Cold light-blue text', { font: 'Noto Sans Bengali', size: 48, color: '#B8F1FF', outlineColor: '#0C2D48', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 2, shadow: 2, align: 2, marginV: 120 }),
+  T('small-corner', 'Small Corner', 'Tiny text, bottom right', { font: 'Noto Sans Bengali', size: 30, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: false, italic: false, borderStyle: 1, outline: 1, shadow: 0, align: 3, marginV: 60 }),
+  T('big-bold', 'Big Bold', 'The biggest bold text', { font: 'Noto Sans Bengali', size: 68, color: '#FFFFFF', outlineColor: '#000000', backColor: '#000000', bold: true, italic: false, borderStyle: 1, outline: 3, shadow: 2, align: 2, marginV: 110 }),
+];
+function getTemplate(id) {
+  return CAPTION_TEMPLATES.find((t) => t.id === id) || CAPTION_TEMPLATES[0];
+}
+function templatePreviewCss(t) {
+  // Approximate CSS for the picker preview swatch.
+  const box = t.borderStyle === 3;
+  return {
+    fontSize: Math.max(11, Math.round(t.size * 0.32)) + 'px',
+    color: t.color,
+    background: box ? (t.backColor === '#FFFFFF' ? '#ffffff' : 'rgba(0,0,0,0.75)') : 'transparent',
+    fontWeight: t.bold ? 800 : 400,
+    fontStyle: t.italic ? 'italic' : 'normal',
+    textShadow: t.shadow > 0 ? '1px 2px 2px rgba(0,0,0,.8)' : (t.outline >= 2 ? '0 0 2px #000, 1px 1px 0 #000, -1px -1px 0 #000' : 'none'),
+    fontFamily: t.font.includes('Mono') ? 'monospace' : 'system-ui',
+  };
 }
 
 // ---- YouTube metadata + captions via yt-dlp (server-side, no paste needed) ----
@@ -137,11 +244,28 @@ async function fetchYouTube(url) {
       .sort((a, b) => b.v - a.v).slice(0, 5)
       .map((p) => Math.round(p.t));
   }
-  return { info, cues, traffic };
+
+  // Live status: is_live / was_live / is_upcoming / not_live.
+  const liveStatus = info.live_status || (info.is_live ? 'is_live' : (info.was_live ? 'was_live' : 'not_live'));
+  const isLive = info.is_live === true || liveStatus === 'is_live';
+
+  // Storyboard sprite (for the frame-select thumbnail strip), if published.
+  let storyboard = null;
+  const boards = (info.formats || []).filter((f) => /storyboard/i.test(String(f.format_note || '') + ' ' + String(f.format_id || '')) && f.url);
+  if (boards.length) {
+    const best = boards.sort((a, b) => ((b.width || 0) * (b.height || 0)) - ((a.width || 0) * (a.height || 0)))[0];
+    storyboard = {
+      url: best.url, width: best.width || 0, height: best.height || 0,
+      rows: best.rows || 0, columns: best.columns || 0,
+      fragments: (best.fragments || []).map((fr) => fr.url).filter(Boolean).slice(0, 12),
+    };
+  }
+
+  return { info, cues, traffic, liveStatus, isLive, storyboard };
 }
 
 // ---- Clip scoring: Gemini when a key is set, else transparent heuristic ----
-const HOOK_WORDS = ['never', 'secret', 'mistake', 'stop', 'why', 'how', 'best', 'worst', 'free', 'truth', 'nobody', 'everyone', 'warning', 'shocking', 'insane', 'crazy', 'first', 'last', 'always', 'only', 'kintu', 'kintu', 'keno', 'kivabe', 'kokhono', 'sotti'];
+const HOOK_WORDS = ['never', 'secret', 'mistake', 'stop', 'why', 'how', 'best', 'worst', 'free', 'truth', 'nobody', 'everyone', 'warning', 'shocking', 'insane', 'crazy', 'first', 'last', 'always', 'only', 'kintu', 'keno', 'kivabe', 'kokhono', 'sotti'];
 function heuristicClips(cues, wanted, durationSec) {
   const sentences = [];
   for (const c of cues) {
@@ -157,7 +281,6 @@ function heuristicClips(cues, wanted, durationSec) {
     if (/\d/.test(s.text)) score += 5;
     if (/[?!]/.test(s.text)) score += 3;
     if (s.text.length > 60 && s.text.length < 220) score += 4;
-    // Prefer moments near a traffic peak is handled by the caller; here spread out.
     return { ...s, score: Math.min(92, score), idx: i };
   }).sort((a, b) => b.score - a.score);
 
@@ -198,15 +321,7 @@ async function geminiClips(cues, wanted) {
 }
 
 async function scoreClips(project, wanted) {
-  // Parse every [m:ss] marker in the text, wherever it appears (auto-fetch
-  // stores one cue per line; a pasted transcript may be one long line).
-  const cues = [];
-  const re = /\[(\d+):(\d+)\]\s*([^\[]*)/g;
-  let m;
-  while ((m = re.exec(String(project.transcript || ''))) !== null) {
-    const text = m[3].trim();
-    if (text) cues.push({ start: +m[1] * 60 + +m[2], end: +m[1] * 60 + +m[2] + 5, text });
-  }
+  const cues = cuesFromText(project.transcript);
   if (process.env.GEMINI_API_KEY) {
     try {
       const out = await geminiClips(cues, wanted);
@@ -216,30 +331,230 @@ async function scoreClips(project, wanted) {
   return { engine: 'heuristic', note: 'No AI key set (or AI call failed) — moments scored with the built-in hook/keyword heuristic, not an LLM.', clips: heuristicClips(cues, wanted, project.duration_sec) };
 }
 
-// ---- MP4 render: yt-dlp section download + ffmpeg 9:16 with burned captions ----
+// ---- Caption rendering: each cue keeps its OWN timestamp (caption sync) ----
+// Timed cues for a clip come from the stored transcript cues when available;
+// otherwise they are parsed from the [m:ss] markers in the transcript text.
+// A plain caption list with no times at all falls back to short even slots
+// only as a last resort — and that fallback is labelled in the stored data.
+function getTimedCues(project, clip) {
+  let cues = [];
+  try { cues = JSON.parse(project.transcript_cues_json || 'null') || []; } catch {}
+  if (!cues.length) cues = cuesFromText(project.transcript);
+  const offset = +(clip.caption_offset || 0);
+  const start = +clip.start_sec, end = +clip.end_sec;
+  const clipDur = end - start;
+  const inWindow = [];
+  let prev = null;
+  for (const c of cues) {
+    if (!(c.end > start && c.start < end)) continue;
+    const text = (c.text || '').trim();
+    if (!text) continue;
+    const cs = Math.max(0, c.start - start + offset);
+    const ce = Math.min(clipDur, c.end - start + offset);
+    if (ce <= cs) continue; // zero-length cue (repeated caption line) — skip
+    if (prev && prev.text === text && Math.abs(prev.start - cs) < 0.5) continue; // same line repeated — keep first
+    const row = { start: cs, end: ce, text };
+    inWindow.push(row); prev = row;
+  }
+  if (inWindow.length) return { cues: inWindow, timed: true };
+  // Last-resort fallback: plain caption lines, no timing data exists.
+  const plain = JSON.parse(clip.captions_json || '[]');
+  if (!plain.length) return { cues: [], timed: false };
+  const dur = Math.max(1, end - start);
+  const slot = dur / plain.length;
+  return {
+    cues: plain.map((t, i) => ({ start: i * slot, end: Math.min(dur, (i + 1) * slot - 0.2), text: t })),
+    timed: false,
+  };
+}
+function assColor(hex) {
+  const h = String(hex || '#FFFFFF').replace('#', '');
+  return '&H00' + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
+}
 function assEscape(s) {
   return String(s || '').replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/\n/g, ' ');
 }
-function writeAss(captions, startSec, file) {
-  const fmt = (t) => {
-    const cs = Math.max(0, Math.round(t * 100));
-    const h = Math.floor(cs / 360000), m = Math.floor(cs / 6000) % 60, s = Math.floor(cs / 100) % 60, c = cs % 100;
-    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
-  };
+function assTime(t) {
+  const cs = Math.max(0, Math.round(t * 100));
+  const h = Math.floor(cs / 360000), m = Math.floor(cs / 6000) % 60, s = Math.floor(cs / 100) % 60, c = cs % 100;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
+}
+function writeAss(timedCues, file, templateId, playW, playH) {
+  const t = getTemplate(templateId);
+  const style = `Style: Cap,${t.font},${t.size},${assColor(t.color)},&H000000FF,${assColor(t.outlineColor)},${assColor(t.backColor)},${t.bold ? -1 : 0},${t.italic ? -1 : 0},0,0,100,100,0,0,${t.borderStyle},${t.outline},${t.shadow},${t.align},40,40,${t.marginV},1`;
   let events = '';
-  const lines = (captions || []).map((c, i) => {
-    const t0 = i * 3, t1 = t0 + 2.8;
-    return `Dialogue: 0,${fmt(t0)},${fmt(t1)},Default,,0,0,0,,${assEscape(c)}`;
-  }).join('\n');
-  const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans Bengali,44,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,2,40,40,120,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n${lines}\n`;
+  for (const cue of timedCues) {
+    let text = cue.text;
+    if (t.uppercase) text = text.toUpperCase();
+    if (t.twoLine && text.length > 34) {
+      const mid = text.lastIndexOf(' ', Math.floor(text.length / 2));
+      if (mid > 8) text = text.slice(0, mid) + '\\N' + text.slice(mid + 1);
+    }
+    if (t.karaoke) {
+      // One event per word inside the cue window, so words light up in turn.
+      const words = text.split(/\s+/).filter(Boolean);
+      const span = Math.max(0.25, (cue.end - cue.start) / Math.max(1, words.length));
+      words.forEach((w, i) => {
+        events += `Dialogue: 0,${assTime(cue.start + i * span)},${assTime(cue.start + (i + 1) * span)},Cap,,0,0,0,,${assEscape(w)}\n`;
+      });
+    } else {
+      events += `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Cap,,0,0,0,,${assEscape(text)}\n`;
+    }
+  }
+  const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playW}\nPlayResY: ${playH}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n${style}\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n${events}`;
+  fs.writeFileSync(file, ass);
+}
+function wrapHook(text, per = 26) {
+  // Word-wrap a hook for a title card, ~26 chars per line.
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > per && cur) { lines.push(cur.trim()); cur = w; }
+    else cur = (cur + ' ' + w).trim();
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3).join('\\N');
+}
+function writeCardAss(text, file, playW, playH, opts = {}) {
+  // A centred card (title card / end card): big text on a dark card.
+  const size = opts.size || Math.round(playW * 0.085);
+  const color = opts.color || '#FFC24B';
+  const sub = opts.sub || '';
+  const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playW}\nPlayResY: ${playH}\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Card,Noto Sans Bengali,${size},${assColor(color)},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,5,60,60,0,1\nStyle: Brand,Noto Sans Bengali,${Math.round(playW * 0.038)},${assColor('#FFFFFF')},&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,40,40,${Math.round(playH * 0.05)},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:10.00,Card,,0,0,0,,${assEscape(text)}\n${sub ? `Dialogue: 0,0:00:00.00,0:00:10.00,Brand,,0,0,0,,${assEscape(sub)}\n` : ''}`;
   fs.writeFileSync(file, ass);
 }
 
-async function renderClipJob(project, clip) {
+// ---- MP4 render: yt-dlp section download + ffmpeg 9:16 with burned captions ----
+// Unique formation (ON by default): logo watermark top-right, a branded
+// title card (~1.5s) with the hook at the start, an end card (~1s), and a
+// reframed layout (never a plain raw crop of the source).
+async function probeHasAudio(file) {
+  const r = await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type',
+    '-of', 'csv=p=0', file], { timeout: 30000 });
+  return r.out.includes('audio');
+}
+function recipeSettings() {
+  const row = db.prepare('SELECT settings_json FROM recipe WHERE id=1').get();
+  const saved = row ? JSON.parse(row.settings_json) : {};
+  return { ...DEFAULT_RECIPE, ...saved };
+}
+function uniqueOn(recipe) {
+  return {
+    logo: recipe.uniqueLogo !== false && fs.existsSync(LOGO_PATH),
+    title: recipe.uniqueTitleCard !== false,
+    end: recipe.uniqueEndCard !== false,
+  };
+}
+
+async function finishRender(srcPath, project, clip, recipe) {
   const w = clip.resolution === '1080p' ? 1080 : 720;
   const h = clip.resolution === '1080p' ? 1920 : 1280;
   const outFile = `clip-${clip.id}-${clip.layout}-${clip.resolution}.mp4`;
   const outPath = path.join(RENDER_DIR, outFile);
+  const templateId = clip.caption_template || recipe.captionTemplate || 'word-cut';
+  const { cues: timed, timed: isTimed } = getTimedCues(project, clip);
+  // Store the timed captions used, so re-cuts and the editor keep them.
+  db.prepare('UPDATE clips SET captions_timed_json=? WHERE id=?').run(JSON.stringify(timed), clip.id);
+  const assFile = path.join(RENDER_DIR, `cap-${clip.id}.ass`);
+  writeAss(timed, assFile, templateId, w, h);
+
+  const uq = uniqueOn(recipe);
+  const hasAudio = await probeHasAudio(srcPath);
+  const sub = `subtitles='${assFile.replace(/'/g, "'\\''")}'`;
+  const logoW = Math.round(w * 0.16);
+  const inputs = ['-y', '-i', srcPath];
+  if (uq.logo) inputs.push('-i', LOGO_PATH);
+  const TITLE_DUR = 1.5, END_DUR = 1.0;
+  if (uq.title || uq.end) {
+    if (uq.title) {
+      inputs.push('-f', 'lavfi', '-t', String(TITLE_DUR), '-i', `color=c=0x0b0b10:s=${w}x${h}:r=30`);
+      inputs.push('-f', 'lavfi', '-t', String(TITLE_DUR), '-i', 'anullsrc=r=48000:cl=stereo');
+    }
+    if (uq.end) {
+      inputs.push('-f', 'lavfi', '-t', String(END_DUR), '-i', `color=c=0x0b0b10:s=${w}x${h}:r=30`);
+      inputs.push('-f', 'lavfi', '-t', String(END_DUR), '-i', 'anullsrc=r=48000:cl=stereo');
+    }
+  }
+  // The -i pairs above make the lavfi inputs land at indices 2..; recompute
+  // properly: count -i occurrences in order.
+  const inputIdx = [];
+  for (let i = 0; i < inputs.length; i++) if (inputs[i] === '-i') inputIdx.push((inputIdx.length));
+  const logoIdx = uq.logo ? 1 : -1;
+  const tVid = uq.title ? inputIdx[logoIdx >= 0 ? 2 : 1] : -1;
+  const tAud = uq.title ? inputIdx[logoIdx >= 0 ? 3 : 2] : -1;
+  const eVid = uq.end ? inputIdx[(logoIdx >= 0 ? 2 : 1) + (uq.title ? 2 : 0)] : -1;
+  const eAud = uq.end ? inputIdx[(logoIdx >= 0 ? 2 : 1) + (uq.title ? 2 : 0) + 1] : -1;
+
+  let fc = '';
+  let mainLabel = '[main]';
+  // Main video chain (reframed layout + burned captions, never a raw crop).
+  const base = clip.layout === 'spotlight'
+    ? `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
+    : clip.layout === 'split'
+      ? `[0:v]split[a][b];[a]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=increase,crop=${w}:${Math.floor(h / 2)}[top];[b]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=decrease,pad=${w}:${Math.floor(h / 2)}:(ow-iw)/2:(oh-ih)/2[bot];[top][bot]vstack`
+      : `[0:v]split[a][b];[a]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},gblur=sigma=20[bg];[b]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`;
+  fc = base + `[v0];[v0]${sub}[v1]`;
+  // Logo is used on the main video and, when enabled, on the title/end
+  // cards too — split into exactly as many copies as are actually used
+  // (ffmpeg errors on an unconnected split output).
+  const logoUses = [];
+  if (uq.logo) logoUses.push('main');
+  if (uq.logo && uq.title) logoUses.push('title');
+  if (uq.logo && uq.end) logoUses.push('end');
+  const lgName = { main: 'lg1', title: 'lg2', end: 'lg3' };
+  if (uq.logo) {
+    const split = logoUses.length > 1
+      ? `[lg]split=${logoUses.length}${logoUses.map((u) => `[${lgName[u]}]`).join('')};`
+      : '[lg]copy[lg1];';
+    fc = `[1:v]scale=${logoW}:-1[lg];` + split + fc + `;[v1][lg1]overlay=W-w-24:24[v2]`;
+    mainLabel = '[v2]';
+  } else {
+    mainLabel = '[v1]';
+  }
+  let vOut = mainLabel, aOut = null;
+  if (uq.title || uq.end) {
+    // Concat needs identical SAR + fps on every segment: the source video
+    // often carries a non-square SAR, the title/end cards are 1:1 @30fps.
+    fc += `;${mainLabel}setsar=1,fps=30[vm]`;
+    mainLabel = '[vm]';
+    const titleAss = path.join(RENDER_DIR, `title-${clip.id}.ass`);
+    const endAss = path.join(RENDER_DIR, `end-${clip.id}.ass`);
+    if (uq.title) writeCardAss(wrapHook(clip.translated_hook || clip.hook || ''), titleAss, w, h, { sub: 'CLIP STUDIO' });
+    if (uq.end) writeCardAss('Clip Studio', endAss, w, h, { size: Math.round(w * 0.08), color: '#FFFFFF' });
+    if (uq.title) {
+      fc += `;[${tVid}:v]subtitles='${titleAss.replace(/'/g, "'\\''")}'[tv0]`;
+      fc += uq.logo ? `;[tv0][lg2]overlay=(W-w)/2:60,setsar=1,fps=30[tv]` : `;[tv0]setsar=1,fps=30[tv]`;
+    }
+    if (uq.end) {
+      fc += `;[${eVid}:v]subtitles='${endAss.replace(/'/g, "'\\''")}'[ev0]`;
+      fc += uq.logo ? `;[ev0][lg3]overlay=(W-w)/2:60,setsar=1,fps=30[ev]` : `;[ev0]setsar=1,fps=30[ev]`;
+    }
+    const segs = [];
+    if (uq.title) segs.push('[tv]', `[${tAud}:a]`);
+    // Concat needs every audio segment at the same rate/channels — resample
+    // the source audio to 48kHz stereo (YouTube audio is usually 48kHz;
+    // the title/end silence is generated at 48kHz stereo too).
+    if (hasAudio) fc += ';[0:a]aresample=48000[a0]';
+    segs.push(mainLabel, hasAudio ? '[a0]' : '[sil:a]');
+    if (uq.end) segs.push('[ev]', `[${eAud}:a]`);
+    if (!hasAudio) fc += `;anullsrc=r=48000:cl=stereo:d=${Math.max(1, clip.end_sec - clip.start_sec)}[sil]`;
+    fc += `;${segs.join('')}concat=n=${segs.length / 2}:v=1:a=1[vout][aout]`;
+    vOut = '[vout]'; aOut = '[aout]';
+  }
+  const args = [...inputs, '-filter_complex', fc, '-map', vOut];
+  if (aOut) args.push('-map', aOut);
+  else if (hasAudio) args.push('-map', '0:a?');
+  args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+    '-c:a', 'aac', '-shortest', outPath);
+  const ff = await run('ffmpeg', args, { timeout: 600000 });
+  if (ff.code !== 0 || !fs.existsSync(outPath)) {
+    throw new Error('ffmpeg failed to build the clip.' + (ff.err ? ' ' + ff.err.slice(-300) : ''));
+  }
+  return { file: outFile, timed: isTimed, template: templateId, unique: uq };
+}
+
+async function renderClipJob(project, clip) {
   const srcBase = path.join(RENDER_DIR, `src-${clip.id}`);
   const dl = await run('yt-dlp', ['-f', 'bestvideo[height<=720]+bestaudio/best/best',
     '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
@@ -249,35 +564,50 @@ async function renderClipJob(project, clip) {
     .filter((f) => f.startsWith(`src-${clip.id}.`))
     .map((f) => path.join(RENDER_DIR, f))[0];
   if (dl.code !== 0 || !srcPath) throw new Error('Download failed — YouTube blocked this video or the section is unavailable.');
-  const caps = clip.translated_captions_json ? JSON.parse(clip.translated_captions_json) : JSON.parse(clip.captions_json || '[]');
-  const assFile = path.join(RENDER_DIR, `cap-${clip.id}.ass`);
-  writeAss(caps, clip.start_sec, assFile);
-  const hookFile = path.join(RENDER_DIR, `hook-${clip.id}.ass`);
-  const hookText = clip.translated_hook || clip.hook || '';
-  writeAss([hookText], clip.start_sec, hookFile);
+  try {
+    return await finishRender(srcPath, project, clip, recipeSettings());
+  } finally {
+    try { fs.unlinkSync(srcPath); } catch {}
+  }
+}
 
-  const sub = `subtitles='${assFile.replace(/'/g, "'\\''")}'`;
-  const fc = clip.layout === 'spotlight'
-    ? `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},${sub}[v]`
-    : clip.layout === 'split'
-      ? `[0:v]split[a][b];[a]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=increase,crop=${w}:${Math.floor(h / 2)}[top];[b]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=decrease,pad=${w}:${Math.floor(h / 2)}:(ow-iw)/2:(oh-ih)/2[bot];[top][bot]vstack,${sub}[v]`
-      : `[0:v]split[a][b];[a]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},gblur=sigma=20[bg];[b]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,${sub}[v]`;
-  const ff = await run('ffmpeg', ['-y', '-i', srcPath, '-filter_complex', fc,
-    '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-    '-c:a', 'aac', '-shortest', outPath], { timeout: 600000 });
-  try { fs.unlinkSync(srcPath); } catch {}
-  if (ff.code !== 0 || !fs.existsSync(outPath)) throw new Error('ffmpeg failed to build the clip.');
-  return outFile;
+async function renderLiveClipJob(project, clip) {
+  // Live stream: record from the start of the stream and cut the range.
+  const srcBase = path.join(RENDER_DIR, `live-${clip.id}`);
+  const dl = await run('yt-dlp', ['-f', 'bestvideo[height<=720]+bestaudio/best/best',
+    '--live-from-start', '--download-sections', `*${clip.start_sec}-${clip.end_sec}`,
+    '-o', srcBase + '.%(ext)s', project.source_url], { timeout: 600000 });
+  const srcPath = fs.readdirSync(RENDER_DIR)
+    .filter((f) => f.startsWith(`live-${clip.id}.`))
+    .map((f) => path.join(RENDER_DIR, f))[0];
+  if (dl.code !== 0 || !srcPath) throw new Error('Could not record the live stream — it may have ended, or the section is not available yet.');
+  try {
+    return await finishRender(srcPath, project, clip, recipeSettings());
+  } finally {
+    try { fs.unlinkSync(srcPath); } catch {}
+  }
 }
 
 // ---- API ----
 app.get('/health', (req, res) => res.json({ ok: true, service: 'clip-studio', time: new Date().toISOString() }));
+
+// Caption templates: the full 35+ list, with picker preview CSS.
+app.get('/api/caption-templates', (req, res) => {
+  res.json({
+    count: CAPTION_TEMPLATES.length,
+    templates: CAPTION_TEMPLATES.map((t) => ({
+      id: t.id, name: t.name, desc: t.desc, preview: templatePreviewCss(t),
+    })),
+  });
+});
 
 app.get('/api/projects', (req, res) => {
   const rows = db.prepare('SELECT * FROM projects ORDER BY id DESC').all();
   for (const r of rows) {
     r.clip_count = db.prepare('SELECT COUNT(*) c FROM clips WHERE project_id=?').get(r.id).c;
     r.top_score = db.prepare('SELECT MAX(score) m FROM clips WHERE project_id=?').get(r.id).m || 0;
+    try { r.storyboard = JSON.parse(r.storyboard_json || 'null'); } catch { r.storyboard = null; }
+    delete r.transcript_cues_json;
   }
   res.json({ projects: rows });
 });
@@ -304,13 +634,16 @@ app.post('/api/projects', async (req, res) => {
     const r = db.prepare(`INSERT INTO projects (title, channel, source_url, source_type, youtube_id, transcript_status, fetch_status)
       VALUES ('Loading…','YouTube',?,'youtube',?,'pending','fetching')`).run(link, youtubeId(link));
     const id = r.lastInsertRowid;
-    // Auto-fetch in the background: metadata + captions + traffic, no paste needed.
-    fetchYouTube(link).then(({ info, cues, traffic }) => {
-      db.prepare(`UPDATE projects SET title=?, channel=?, duration_sec=?, thumb_url=?, transcript=?, transcript_status=?, traffic_json=?, fetch_status=? WHERE id=?`)
+    // Auto-fetch in the background: metadata + captions + traffic + live status,
+    // no paste needed.
+    fetchYouTube(link).then(({ info, cues, traffic, liveStatus, isLive, storyboard }) => {
+      db.prepare(`UPDATE projects SET title=?, channel=?, duration_sec=?, thumb_url=?, transcript=?, transcript_cues_json=?, transcript_status=?, traffic_json=?, fetch_status=?, live_status=?, is_live=?, storyboard_json=? WHERE id=?`)
         .run(info.title || 'YouTube video', info.channel || info.uploader || 'YouTube',
           info.duration || null, info.thumbnail || null,
-          transcriptToLines(cues), cues.length ? 'ready' : 'needs_paste',
-          JSON.stringify(traffic), cues.length ? 'ready' : 'needs_paste', id);
+          transcriptToLines(cues), JSON.stringify(cues),
+          cues.length ? 'ready' : 'needs_paste',
+          JSON.stringify(traffic), cues.length ? 'ready' : 'needs_paste',
+          liveStatus, isLive ? 1 : 0, storyboard ? JSON.stringify(storyboard) : null, id);
     }).catch((e) => {
       db.prepare(`UPDATE projects SET title=?, fetch_status='failed', fetch_error=?, transcript_status='needs_paste' WHERE id=?`)
         .run('YouTube video', String(e.message || e), id);
@@ -323,7 +656,27 @@ app.get('/api/projects/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'Project not found.' });
   p.clips = db.prepare('SELECT * FROM clips WHERE project_id=? ORDER BY score DESC').all(p.id);
+  try { p.storyboard = JSON.parse(p.storyboard_json || 'null'); } catch { p.storyboard = null; }
   res.json({ project: p });
+});
+
+// Storyboard sprite for the frame-select thumbnail strip.
+app.get('/api/projects/:id/storyboard', (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found.' });
+  let sb = null;
+  try { sb = JSON.parse(p.storyboard_json || 'null'); } catch {}
+  if (!sb) return res.json({ storyboard: null, note: 'YouTube did not publish a storyboard for this video — use the player frames instead.' });
+  res.json({ storyboard: sb, duration_sec: p.duration_sec });
+});
+
+// Timed captions for one clip (the exact times that will be burned in).
+app.get('/api/projects/:id/clips/:clipId/captions', (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  const c = db.prepare('SELECT * FROM clips WHERE id=? AND project_id=?').get(req.params.clipId, req.params.id);
+  if (!p || !c) return res.status(404).json({ error: 'Project or clip not found.' });
+  const { cues, timed } = getTimedCues(p, c);
+  res.json({ clip_id: c.id, template: c.caption_template || 'word-cut', offset_sec: +(c.caption_offset || 0), timed, cues });
 });
 
 app.post('/api/projects/:id/transcript', (req, res) => {
@@ -331,8 +684,10 @@ app.post('/api/projects/:id/transcript', (req, res) => {
   if (!p) return res.status(404).json({ error: 'Project not found.' });
   const text = String(req.body?.transcript || '').trim();
   if (text.length < 50) return res.status(400).json({ error: 'Paste the full transcript first — it looks too short.' });
-  db.prepare(`UPDATE projects SET transcript=?, transcript_status='ready', fetch_status='ready' WHERE id=?`).run(text, p.id);
-  res.json({ ok: true });
+  const cues = cuesFromText(text);
+  db.prepare(`UPDATE projects SET transcript=?, transcript_cues_json=?, transcript_status='ready', fetch_status='ready' WHERE id=?`)
+    .run(text, JSON.stringify(cues), p.id);
+  res.json({ ok: true, cues: cues.length });
 });
 
 app.post('/api/projects/:id/find-clips', async (req, res) => {
@@ -341,7 +696,9 @@ app.post('/api/projects/:id/find-clips', async (req, res) => {
     if (!p) return res.status(404).json({ error: 'Project not found.' });
     if (!p.transcript || p.transcript.length < 50)
       return res.status(400).json({ error: 'No transcript yet — wait for the automatic fetch, or paste one.' });
-    const wanted = Math.max(1, Math.min(20, parseInt(req.body?.count || 5, 10)));
+    // Clip count: the user chooses any number (1, 2, 5, 10, …). No fixed
+    // small limit — capped at 50 only to keep one request sane.
+    const wanted = Math.max(1, Math.min(50, parseInt(req.body?.count || 5, 10) || 5));
     const { engine, note, clips } = await scoreClips(p, wanted);
     const ins = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags) VALUES (?,?,?,?,?,?,?)`);
     const created = [];
@@ -349,7 +706,7 @@ app.post('/api/projects/:id/find-clips', async (req, res) => {
       const r = ins.run(p.id, c.start_sec, c.end_sec, c.score || 60, c.hook || '', JSON.stringify(c.captions || []), (c.hashtags || []).join(' '));
       created.push(db.prepare('SELECT * FROM clips WHERE id=?').get(r.lastInsertRowid));
     }
-    res.json({ engine, note: note || null, created });
+    res.json({ engine, note: note || null, requested: wanted, found: created.length, created });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
@@ -371,6 +728,13 @@ app.patch('/api/projects/:id/clips/:clipId', (req, res) => {
   for (const f of fields) if (req.body?.[f] !== undefined) { sets.push(`${f}=?`); vals.push(req.body[f]); }
   if (req.body?.captions) { sets.push('captions_json=?'); vals.push(JSON.stringify(req.body.captions)); }
   if (req.body?.hashtags) { sets.push('hashtags=?'); vals.push(req.body.hashtags); }
+  if (req.body?.caption_offset !== undefined) {
+    const off = Math.max(-5, Math.min(5, Math.round(parseFloat(req.body.caption_offset) * 10) / 10 || 0));
+    sets.push('caption_offset=?'); vals.push(off);
+  }
+  if (req.body?.caption_template !== undefined) {
+    sets.push('caption_template=?'); vals.push(getTemplate(req.body.caption_template).id);
+  }
   if (!sets.length) return res.json({ clip: c });
   db.prepare(`UPDATE clips SET ${sets.join(',')} WHERE id=?`).run(...vals, c.id);
   res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(c.id) });
@@ -409,8 +773,8 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
     return res.status(400).json({ error: 'Auto-cut works from YouTube only — Drive and uploaded videos preview in their own app instead.' });
   if (c.render_status === 'rendering') return res.json({ clip: c, note: 'Already cutting.' });
   db.prepare(`UPDATE clips SET render_status='rendering' WHERE id=?`).run(c.id);
-  renderClipJob(p, c).then((file) => {
-    db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(file, c.id);
+  renderClipJob(p, c).then((info) => {
+    db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(info.file, c.id);
   }).catch((e) => {
     db.prepare(`UPDATE clips SET render_status='failed' WHERE id=?`).run(c.id);
     console.error('render failed', e.message);
@@ -418,16 +782,46 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
   res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(c.id) });
 });
 
+// ---- Live-stream clipping ----
+app.post('/api/projects/:id/live-clip', async (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found.' });
+  if (p.source_type !== 'youtube')
+    return res.status(400).json({ error: 'Live clipping works from YouTube only.' });
+  if (p.live_status === 'is_upcoming' || p.live_status === 'post_live')
+    return res.status(400).json({ error: 'This stream has not started yet — try again once it is live.' });
+  if (p.live_status === 'was_live')
+    return res.status(400).json({ error: 'This stream has ended — it is a normal video now, use the Cut button on a clip (VOD).' });
+  if (p.live_status !== 'is_live' || !p.is_live)
+    return res.status(400).json({ error: 'This video is not a live stream right now.' });
+  const { start_sec, end_sec, hook } = req.body || {};
+  if (!(end_sec > start_sec)) return res.status(400).json({ error: 'End time must be after start time.' });
+  const r = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags, live_clip) VALUES (?,?,?,?,?,'[]','',1)`)
+    .run(p.id, start_sec, end_sec, 0, hook || 'Clipped from live.');
+  const clip = db.prepare('SELECT * FROM clips WHERE id=?').get(r.lastInsertRowid);
+  db.prepare(`UPDATE clips SET render_status='rendering' WHERE id=?`).run(clip.id);
+  renderLiveClipJob(p, clip).then((info) => {
+    db.prepare(`UPDATE clips SET render_status='ready', video_file=? WHERE id=?`).run(info.file, clip.id);
+  }).catch((e) => {
+    db.prepare(`UPDATE clips SET render_status='failed' WHERE id=?`).run(clip.id);
+    console.error('live render failed', e.message);
+  });
+  res.json({ clip: db.prepare('SELECT * FROM clips WHERE id=?').get(clip.id), note: 'Recording the live stream from its start and cutting your range — this takes a few minutes.' });
+});
+
 const DEFAULT_RECIPE = {
   recipe: 'Clip long video', brandKit: 'No brand kit',
   clipping: true, aiPicks: 'Auto', clipLength: 'auto',
-  captions: true, captionStyle: 'Word Cut',
+  captions: true, captionStyle: 'Word Cut', captionTemplate: 'word-cut',
   autoHook: true, hookTemplate: 'Classic',
   motionGraphics: false, aiEmojis: false, autoBroll: false,
   speechCleanup: true, enhanceAudio: false, autoSfx: false,
   autoZoom: false, autoTransitions: false, autoColor: false,
   eyeContact: false, voiceDubbing: false,
   captionTranslation: false, translationLang: 'bn-en',
+  // Copyright-safe unique formation — ON by default.
+  uniqueLogo: true, uniqueTitleCard: true, uniqueEndCard: true, uniqueReframe: true,
+  captionOffset: 0,
 };
 app.get('/api/recipe', (req, res) => {
   const row = db.prepare('SELECT settings_json FROM recipe WHERE id=1').get();
@@ -485,6 +879,10 @@ app.get('/api/projects/:id/pack', (req, res) => {
       translated_hook: c.translated_hook || null,
       translated_captions: c.translated_captions_json ? JSON.parse(c.translated_captions_json) : null,
       translated_lang: c.translated_lang || null,
+      caption_template: c.caption_template || 'word-cut',
+      caption_offset: +(c.caption_offset || 0),
+      timed_captions: c.captions_timed_json ? JSON.parse(c.captions_timed_json) : null,
+      live_clip: !!c.live_clip,
     })),
   });
 });
