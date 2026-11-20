@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip Studio — personal AI clipping</title>
+<style>
+:root{--bg:#0b0b10;--glass:rgba(255,255,255,.06);--line:rgba(255,255,255,.12);--txt:#f5f3ee;--mut:#a9a6ad;--acc:#ff6a1a;--acc2:#a855f7}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 80% -10%,rgba(168,85,247,.25),transparent),radial-gradient(700px 500px at 0% 0%,rgba(255,106,26,.18),transparent),var(--bg);color:var(--txt);font:16px/1.5 system-ui,Segoe UI,Arial,sans-serif;min-height:100vh}
+a{color:#ffb38a}.wrap{display:flex;min-height:100vh}
+aside{width:230px;padding:20px 14px;border-right:1px solid var(--line);background:rgba(255,255,255,.03);backdrop-filter:blur(14px)}
+.logo{display:flex;gap:10px;align-items:center;font-weight:800;font-size:18px;margin-bottom:24px}
+.logo .tile{width:38px;height:38px;border-radius:10px;background:#111;display:grid;place-items:center;font-size:20px;border:1px solid var(--line)}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--txt);padding:10px 12px;border-radius:10px;cursor:pointer;font-size:15px}
+nav button.on,nav button:hover{background:var(--glass)}
+main{flex:1;padding:26px;max-width:1080px}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:18px;backdrop-filter:blur(14px);padding:20px}
+.hero h1{margin:0 0 6px;font-size:26px}.hero p{color:var(--mut);margin:0 0 16px}
+.paste{display:flex;gap:10px}.paste input{flex:1;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:999px;color:var(--txt);padding:14px 18px;font-size:16px;outline:none}
+.btn{background:linear-gradient(90deg,var(--acc),#ff8a3d);border:0;color:#fff;font-weight:700;border-radius:999px;padding:13px 22px;cursor:pointer;font-size:15px}
+.btn.ghost{background:var(--glass);border:1px solid var(--line);color:var(--txt)}
+.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}.row .btn{padding:10px 16px;font-size:14px}
+.stats{display:flex;gap:14px;margin:18px 0}.stat{flex:1;text-align:center}.stat b{font-size:26px;display:block}.stat span{color:var(--mut);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.card{cursor:pointer}.card img{width:100%;border-radius:12px;display:block;aspect-ratio:16/9;object-fit:cover;background:#222}
+.card h3{margin:10px 0 4px;font-size:16px}.card p{color:var(--mut);margin:0;font-size:13px}
+.badge{display:inline-block;background:rgba(255,106,26,.2);border:1px solid rgba(255,106,26,.5);border-radius:999px;padding:2px 10px;font-size:12px;margin-right:6px}
+textarea{width:100%;min-height:110px;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:12px;font-size:15px}
+.clip{margin-top:12px}.clip .bar{height:8px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden}.clip .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--acc2))}
+select,input[type=number]{background:rgba(0,0,0,.5);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:9px 10px}
+label{font-size:13px;color:var(--mut);display:block;margin:10px 0 4px}
+.note{color:var(--mut);font-size:13px}.err{color:#ff9a9a}
+@media(max-width:760px){aside{display:none}.wrap{display:block}main{padding:14px}.paste{flex-direction:column}.paste input{border-radius:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<aside>
+  <div class="logo"><span class="tile">✂️</span> Clip Studio</div>
+  <nav>
+    <button class="on" onclick="show('dash')">Dashboard</button>
+    <button onclick="show('dash')">Projects</button>
+    <button onclick="show('recipe')">Recipe settings</button>
+    <button onclick="show('fix')">Fix requests</button>
+  </nav>
+  <p class="note" style="margin-top:24px">Personal use only.<br>Free tier: server sleeps after 15 min idle — first load takes ~1 min to wake.</p>
+</aside>
+<main>
+  <section id="dash">
+    <div class="glass hero">
+      <h1>Make Shorts from long videos</h1>
+      <p>Paste a YouTube link — the app detects the video, fetches the transcript itself, analyses viewer traffic and cuts the best clips. No transcript paste needed.</p>
+      <div class="paste">
+        <input id="link" placeholder="Drop a YouTube link" autocomplete="off">
+        <button class="btn" onclick="createProject()">Create project</button>
+      </div>
+      <div class="row">
+        <button class="btn ghost" onclick="pickUpload()">⬆️ Upload <span class="note">(max 15 GB)</span></button>
+        <button class="btn ghost" onclick="pickDrive()">▽ Google Drive</button>
+        <input type="file" id="file" accept="video/*" hidden>
+      </div>
+      <div id="driveBox" style="display:none;margin-top:12px">
+        <input id="driveLink" placeholder="Paste a Google Drive share link" style="width:100%;background:rgba(0,0,0,.45);border:1px solid var(--line);border-radius:12px;color:var(--txt);padding:12px">
+        <div class="row"><button class="btn" onclick="createDrive()">Add Drive video</button></div>
+        <p class="note">Set the file to “Anyone with the link can view”.</p>
+      </div>
+      <p id="msg" class="note"></p>
+    </div>
+    <div class="stats">
+      <div class="glass stat"><b id="stP">0</b><span>Projects</span></div>
+      <div class="glass stat"><b id="stC">0</b><span>Clips</span></div>
+      <div class="glass stat"><b id="stS">0</b><span>Best score</span></div>
+    </div>
+    <div class="row" style="margin-bottom:12px"><input id="q" placeholder="Search projects…" oninput="load()" style="flex:1"></div>
+    <div id="grid" class="grid"></div>
+  </section>
+
+  <section id="project" style="display:none">
+    <button class="btn ghost" onclick="show('dash')">← Back</button>
+    <div class="glass" style="margin-top:12px" id="pHead"></div>
+    <div class="glass" style="margin-top:12px" id="pBody"></div>
+  </section>
+
+  <section id="recipe" style="display:none">
+    <div class="glass"><h2>Recipe settings</h2>
+      <label>Caption style</label>
+      <select id="rCap"><option>Word Cut</option><option>Karaoke</option><option>Marker Sweep</option><option>Negative Keywords</option><option>Word Cut Alt</option></select>
+      <label>Auto hook template</label>
+      <select id="rHook"><option>Classic</option><option>Editorial</option><option>Statement</option><option>Sunset</option></select>
+      <label><input type="checkbox" id="rClean" checked> Speech cleanup — remove pauses &amp; filler words</label>
+      <div class="row"><button class="btn" onclick="saveRecipe()">Save recipe</button></div>
+      <p class="note">Caption translation is Bengali ↔ English only. Every toggle is kept for later use — nothing is removed.</p>
+    </div>
+  </section>
+
+  <section id="fix" style="display:none">
+    <div class="glass"><h2>Fix requests</h2><p class="note">Write what to fix in one place — e.g. “akhane thik koro”. (This scaffold stores them locally in a future version; for now, tell Muse in chat.)</p></div>
+  </section>
+</main>
+</div>
+<script>
+let cur=null;
+function show(id){for(const s of ['dash','project','recipe','fix'])document.getElementById(s).style.display=s===id?'block':'none';if(id==='dash')load();}
+async function api(p,m,b){const r=await fetch(p,{method:m||'GET',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;}
+async function load(){const q=document.getElementById('q').value.toLowerCase();const {projects}=await api('/api/projects');const f=projects.filter(p=>(p.title||'').toLowerCase().includes(q));document.getElementById('stP').textContent=projects.length;document.getElementById('stC').textContent=projects.reduce((a,p)=>a+(p.clip_count||0),0);document.getElementById('stS').textContent=Math.max(0,...projects.map(p=>p.top_score||0));document.getElementById('grid').innerHTML=f.map(p=>`<div class="glass card" onclick="openP(${p.id})">${p.thumb_url?`<img src="${p.thumb_url}">`:''}<h3>${esc(p.title)}</h3><p>${esc(p.channel||'')} · ${p.duration_sec?Math.round(p.duration_sec/60)+' min':''} · ${p.clip_count||0} clips</p><p><span class="badge">${p.top_score||0} VIRAL</span><span class="badge">${p.source_type||'youtube'}</span><span class="badge">${esc(p.transcript_status||'')}</span></p></div>`).join('')||'<p class="note">No projects yet — paste a link above.</p>';}
+function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function createProject(){const url=document.getElementById('link').value.trim();const m=document.getElementById('msg');try{m.textContent='Working automatically…';const {project}=await api('/api/projects','POST',{url});m.textContent='Project created — transcript is being fetched automatically. Opening it…';setTimeout(()=>openP(project.id),800);}catch(e){m.innerHTML='<span class="err">'+esc(e.message)+'</span>';}}
+function pickUpload(){document.getElementById('file').click();}
+document.getElementById('file').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;if(f.size>15*1024*1024*1024){alert('That file is over the 15 GB maximum upload size.');return;}try{const {project}=await api('/api/projects','POST',{sourceType:'upload',fileName:f.name,fileSizeBytes:f.size});alert('Upload project saved (the video itself stays on your device). Paste a transcript in the project to find clips.');openP(project.id);}catch(err){alert(err.message);}});
+function pickDrive(){document.getElementById('driveBox').style.display='block';document.getElementById('driveLink').focus();}
+async function createDrive(){const driveUrl=document.getElementById('driveLink').value.trim();try{const {project}=await api('/api/projects','POST',{sourceType:'drive',driveUrl});openP(project.id);}catch(e){alert(e.message);}}
+async function openP(id){cur=id;show('project');const {project:p}=await api('/api/projects/'+id);document.getElementById('pHead').innerHTML=`<h2>${esc(p.title)}</h2><p>${esc(p.channel||'')} · ${p.duration_sec?Math.round(p.duration_sec/60)+' min':''} · ${p.clips.length} clips · <span class="badge">${esc(p.fetch_status||'')}</span></p>${p.fetch_error?`<p class="err">${esc(p.fetch_error)}</p>`:''}${p.traffic_json?`<p class="note">Traffic: ${esc(p.traffic_json)}</p>`:''}`;
+document.getElementById('pBody').innerHTML=`
+${p.transcript_status==='needs_paste'?`<label>Paste transcript (backup only — automatic fetch failed)</label><textarea id="tr">${esc(p.transcript||'')}</textarea><div class="row"><button class="btn" onclick="saveTr()">Save transcript</button></div>`:''}
+<label>How many clips? (no limit — pick any number)</label>
+<input type="number" id="cnt" value="5" min="1" max="20">
+<div class="row"><button class="btn" onclick="findClips()">Make my clips</button></div>
+<div id="clips">${p.clips.map(clipHtml).join('')||'<p class="note">No clips yet.</p>'}</div>
+<div class="glass" style="margin-top:12px"><h3>+ Add clip by hand</h3><label>Start (seconds)</label><input type="number" id="ms" value="0"><label>End (seconds)</label><input type="number" id="me" value="30"><div class="row"><button class="btn ghost" onclick="addClip()">Add clip</button></div></div>`;
+}
+function clipHtml(c){return `<div class="glass clip"><b>${c.score} VIRAL</b> · ${c.start_sec}s → ${c.end_sec}s · ${esc(c.status||'new')}<p>${esc(c.hook||'')}</p><div class="bar"><i style="width:${c.score||0}%"></i></div><div class="row"><select onchange="setClip(${c.id},'layout',this.value)"><option ${c.layout==='full'?'selected':''}>full</option><option ${c.layout==='split'?'selected':''}>split</option><option ${c.layout==='spotlight'?'selected':''}>spotlight</option></select><select onchange="setClip(${c.id},'resolution',this.value)"><option ${c.resolution==='720p'?'selected':''}>720p</option><option ${c.resolution==='1080p'?'selected':''}>1080p</option></select><button class="btn" onclick="renderClip(${c.id})">Cut this clip</button>${c.video_file?`<a class="btn ghost" href="/renders/${c.video_file}" download>Download MP4</a>`:''}<button class="btn ghost" onclick="translateClip(${c.id})">Translate BN↔EN</button></div><p class="note">Render: ${esc(c.render_status||'idle')}${c.translated_lang?` · Translated: ${c.translated_lang.toUpperCase()}`:''}</p></div>`;}
+async function saveTr(){await api('/api/projects/'+cur+'/transcript','POST',{transcript:document.getElementById('tr').value});openP(cur);}
+async function findClips(){const count=+document.getElementById('cnt').value||5;const r=await api('/api/projects/'+cur+'/find-clips','POST',{count});alert('Found '+r.created.length+' clips ('+r.engine+(r.note?' — '+r.note:'')+')');openP(cur);}
+async function addClip(){await api('/api/projects/'+cur+'/clips','POST',{start_sec:+document.getElementById('ms').value,end_sec:+document.getElementById('me').value,hook:'Added manually.'});openP(cur);}
+async function setClip(id,f,v){await api('/api/projects/'+cur+'/clips/'+id,'PATCH',{[f]:v});}
+async function renderClip(id){await api('/api/projects/'+cur+'/clips/'+id+'/render','POST',{});alert('Cutting your clip… refresh the project in a minute to see it.');setTimeout(()=>openP(cur),15000);}
+async function translateClip(id){try{await api('/api/projects/'+cur+'/clips/'+id+'/translate','POST',{});openP(cur);}catch(e){alert(e.message);}}
+async function saveRecipe(){await api('/api/recipe','POST',{captions:document.getElementById('rCap').value,autoHook:document.getElementById('rHook').value,speechCleanup:document.getElementById('rClean').checked});alert('Recipe saved.');}
+load();
+</script>
+</body>
+</html>
