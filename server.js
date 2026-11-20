@@ -73,6 +73,10 @@ addColumn('clips', 'caption_template', "TEXT DEFAULT 'word-cut'");
 addColumn('clips', 'captions_timed_json', 'TEXT');
 addColumn('clips', 'live_clip', 'INTEGER DEFAULT 0');
 addColumn('clips', 'render_error', 'TEXT');
+addColumn('projects', 'source_id', 'TEXT');
+addColumn('clips', 'checklist_json', 'TEXT');
+addColumn('clips', 'ratio', "TEXT DEFAULT '9:16'");
+addColumn('clips', 'duo_corner', "TEXT DEFAULT 'auto'");
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -81,7 +85,8 @@ app.use('/renders', express.static(RENDER_DIR));
 
 // YouTube's bot-wall blocks datacentre IPs on the default web client.
 // The Android player client uses a different API path and usually still
-// works from a server, so every yt-dlp call uses it.
+// works from a server, so every yt-dlp call uses it. (The TV client was
+// tried and is worse: SABR-only, no downloadable video formats.)
 const YT_CLIENT = ['--extractor-args', 'youtube:player_client=android'];
 
 function run(cmd, args, opts = {}) {
@@ -97,6 +102,16 @@ function run(cmd, args, opts = {}) {
 
 function youtubeId(url) {
   const m = String(url || '').match(/(?:v=|youtu\.be\/|live\/|shorts\/)([A-Za-z0-9_-]{6,})/);
+  return m ? m[1] : null;
+}
+function twitchId(url) {
+  // twitch.tv/videos/123456789, twitch.tv/<channel>/clip/<slug>, twitch.tv/clip/<slug>
+  const m = String(url || '').match(/twitch\.tv\/(?:videos\/(\d+)|[^/]+\/clip\/([A-Za-z0-9_-]+)|clip\/([A-Za-z0-9_-]+))/);
+  return m ? (m[1] || m[2] || m[3]) : null;
+}
+function kickId(url) {
+  // kick.com/video/<id> only — a plain kick.com/<channel> page is not a video.
+  const m = String(url || '').match(/kick\.com\/video\/([A-Za-z0-9_-]+)/);
   return m ? m[1] : null;
 }
 function driveFileId(url) {
@@ -225,7 +240,7 @@ async function fetchYouTube(url) {
   try { info = JSON.parse(meta.out); } catch { throw new Error('Could not parse video info from yt-dlp.'); }
 
   // Auto captions (and manual subs if present), English + Bengali preferred.
-  const id = info.id || youtubeId(url) || crypto.randomUUID().slice(0, 8);
+  const id = info.id || youtubeId(url) || twitchId(url) || kickId(url) || crypto.randomUUID().slice(0, 8);
   const subOut = path.join(SUB_DIR, id);
   await run('yt-dlp', [...YT_CLIENT, '--skip-download', '--write-auto-subs', '--write-subs',
     '--sub-format', 'vtt', '--sub-lang', 'en,bn.*', '-o', subOut, url], { timeout: 120000 });
@@ -272,7 +287,7 @@ async function fetchYouTube(url) {
 
 // ---- Clip scoring: Gemini when a key is set, else transparent heuristic ----
 const HOOK_WORDS = ['never', 'secret', 'mistake', 'stop', 'why', 'how', 'best', 'worst', 'free', 'truth', 'nobody', 'everyone', 'warning', 'shocking', 'insane', 'crazy', 'first', 'last', 'always', 'only', 'kintu', 'keno', 'kivabe', 'kokhono', 'sotti'];
-function heuristicClips(cues, wanted, durationSec) {
+function heuristicClips(cues, wanted, durationSec, minLen, maxLen) {
   const sentences = [];
   for (const c of cues) {
     for (const part of c.text.split(/(?<=[.!?।])\s+/)) {
@@ -294,8 +309,8 @@ function heuristicClips(cues, wanted, durationSec) {
   for (const s of scored) {
     if (picked.length >= wanted) break;
     const start = Math.max(0, s.start - 2);
-    const end = Math.min(durationSec || s.end + 30, start + 45);
-    if (end - start < 12) continue;
+    const end = Math.min(durationSec || s.end + maxLen, start + maxLen);
+    if (end - start < minLen) continue;
     if (picked.some((p) => Math.abs(p.start_sec - start) < 45)) continue;
     const window = cues.filter((c) => c.start >= start && c.start < end);
     picked.push({
@@ -309,11 +324,11 @@ function heuristicClips(cues, wanted, durationSec) {
   return picked.sort((a, b) => b.score - a.score);
 }
 
-async function geminiClips(cues, wanted) {
+async function geminiClips(cues, wanted, minLen, maxLen) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
   const excerpt = transcriptToLines(cues).slice(0, 12000);
-  const prompt = `You score viral short-video moments from a transcript with [m:ss] timestamps. Return ONLY a JSON array, max ${wanted} items, each {"start_sec":number,"end_sec":number,"score":0-99,"hook":"short hook","captions":["line"],"hashtags":["#x"]}. Clips 15-60s, non-overlapping, best hook first.\n\n${excerpt}`;
+  const prompt = `You score viral short-video moments from a transcript with [m:ss] timestamps. Return ONLY a JSON array, max ${wanted} items, each {"start_sec":number,"end_sec":number,"score":0-99,"hook":"short hook","captions":["line"],"hashtags":["#x"]}. Clips ${minLen}-${maxLen}s, non-overlapping, best hook first.\n\n${excerpt}`;
   const res = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + encodeURIComponent(key),
     { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -326,15 +341,22 @@ async function geminiClips(cues, wanted) {
   return JSON.parse(json[0]);
 }
 
-async function scoreClips(project, wanted) {
+async function scoreClips(project, wanted, minLen, maxLen) {
   const cues = cuesFromText(project.transcript);
-  if (process.env.GEMINI_API_KEY) {
+  const ai = recipeSettings();
+  // Gemini only runs when the user picked it in Settings → AI. Otherwise the
+  // built-in heuristic scores — and the reply says so honestly.
+  if (ai.aiEngine === 'gemini') {
+    if (!process.env.GEMINI_API_KEY) {
+      return { engine: 'heuristic', note: 'Gemini is selected in Settings → AI but no GEMINI_API_KEY is set — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
+    }
     try {
-      const out = await geminiClips(cues, wanted);
+      const out = await geminiClips(cues, wanted, minLen, maxLen);
       if (Array.isArray(out) && out.length) return { engine: 'gemini', clips: out };
     } catch (e) { /* fall through to heuristic, and say so */ }
+    return { engine: 'heuristic', note: 'Gemini call failed — used the built-in heuristic instead.', clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
   }
-  return { engine: 'heuristic', note: 'No AI key set (or AI call failed) — moments scored with the built-in hook/keyword heuristic, not an LLM.', clips: heuristicClips(cues, wanted, project.duration_sec) };
+  return { engine: 'heuristic', note: null, clips: heuristicClips(cues, wanted, project.duration_sec, minLen, maxLen) };
 }
 
 // ---- Caption rendering: each cue keeps its OWN timestamp (caption sync) ----
@@ -440,6 +462,53 @@ async function probeHasAudio(file) {
     '-of', 'csv=p=0', file], { timeout: 30000 });
   return r.out.includes('audio');
 }
+async function probeDims(file) {
+  const r = await run('ffprobe', ['-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,duration', '-of', 'csv=p=0', file], { timeout: 30000 });
+  const p = r.out.trim().split(',');
+  return { width: parseInt(p[0], 10) || 0, height: parseInt(p[1], 10) || 0, duration: parseFloat(p[2]) || 0 };
+}
+// Output size: normal layouts are always 9:16; Duo follows the clip's ratio.
+function outputSize(clip) {
+  const big = clip.resolution === '1080p';
+  if (clip.layout === 'duo') {
+    const r = clip.ratio || '9:16';
+    if (r === '1:1') return big ? [1080, 1080] : [720, 720];
+    if (r === '4:5') return big ? [1080, 1350] : [720, 900];
+    if (r === '16:9') return big ? [1920, 1080] : [1280, 720];
+    return big ? [1080, 1920] : [720, 1280]; // 9:16
+  }
+  return big ? [1080, 1920] : [720, 1280];
+}
+async function pickDuoCorner(srcPath) {
+  // Auto Split: sample the middle frame and measure texture (YSTDDEV) in
+  // each corner — a facecam corner has far more detail than a flat HUD
+  // corner. Any failure falls back to bottom-right (the usual facecam spot).
+  try {
+    const dims = await probeDims(srcPath);
+    if (!dims.width || !dims.height) return 'bottom-right';
+    const frame = path.join(RENDER_DIR, `duo-frame-${Date.now()}.png`);
+    const mid = Math.max(0.5, (dims.duration || 10) / 2);
+    const ex = await run('ffmpeg', ['-y', '-ss', String(mid), '-i', srcPath, '-frames:v', '1', frame], { timeout: 30000 });
+    if (ex.code !== 0 || !fs.existsSync(frame)) return 'bottom-right';
+    const cw = Math.round(dims.width * 0.30), ch = Math.round(cw * 9 / 16);
+    const corners = {
+      'top-left': [0, 0],
+      'top-right': [dims.width - cw, 0],
+      'bottom-left': [0, dims.height - ch],
+      'bottom-right': [dims.width - cw, dims.height - ch],
+    };
+    let best = 'bottom-right', bestScore = -1;
+    for (const [name, [x, y]] of Object.entries(corners)) {
+      const st = await run('ffmpeg', ['-i', frame, '-vf', `crop=${cw}:${ch}:${x}:${y},signalstats`, '-f', 'null', '-'], { timeout: 30000 });
+      const m = (st.err + st.out).match(/YSTDDEV=([\d.]+)/);
+      const v = m ? parseFloat(m[1]) : 0;
+      if (v > bestScore) { bestScore = v; best = name; }
+    }
+    try { fs.unlinkSync(frame); } catch {}
+    return best;
+  } catch { return 'bottom-right'; }
+}
 function recipeSettings() {
   const row = db.prepare('SELECT settings_json FROM recipe WHERE id=1').get();
   const saved = row ? JSON.parse(row.settings_json) : {};
@@ -454,9 +523,11 @@ function uniqueOn(recipe) {
 }
 
 async function finishRender(srcPath, project, clip, recipe) {
-  const w = clip.resolution === '1080p' ? 1080 : 720;
-  const h = clip.resolution === '1080p' ? 1920 : 1280;
-  const outFile = `clip-${clip.id}-${clip.layout}-${clip.resolution}.mp4`;
+  const [w, h] = outputSize(clip);
+  const ratioSlug = (clip.ratio || '9:16').replace(':', 'x');
+  const outFile = clip.layout === 'duo'
+    ? `clip-${clip.id}-duo-${ratioSlug}-${clip.resolution}.mp4`
+    : `clip-${clip.id}-${clip.layout}-${clip.resolution}.mp4`;
   const outPath = path.join(RENDER_DIR, outFile);
   const templateId = clip.caption_template || recipe.captionTemplate || 'word-cut';
   const { cues: timed, timed: isTimed } = getTimedCues(project, clip);
@@ -494,12 +565,37 @@ async function finishRender(srcPath, project, clip, recipe) {
 
   let fc = '';
   let mainLabel = '[main]';
-  // Main video chain (reframed layout + burned captions, never a raw crop).
-  const base = clip.layout === 'spotlight'
+  // Duo layout (creator + content): the content fills the frame and the
+  // creator is a picture-in-picture cropped from the facecam corner of the
+  // source, with a subtle white border. Corner is auto-picked (or the user's
+  // override). If the source cannot be probed, fall back to the Full layout.
+  let duoCorner = null;
+  const base = await (async () => {
+    if (clip.layout !== 'duo') return null;
+    const dims = await probeDims(srcPath);
+    if (!dims.width || !dims.height) return null;
+    duoCorner = (clip.duo_corner && clip.duo_corner !== 'auto') ? clip.duo_corner : await pickDuoCorner(srcPath);
+    const pw = Math.round(w * 0.30), ph = Math.round(pw * 9 / 16), mgn = 16;
+    const cw = Math.round(dims.width * 0.30), ch = Math.round(cw * 9 / 16);
+    const srcCorners = {
+      'top-left': [0, 0],
+      'top-right': [Math.max(0, dims.width - cw), 0],
+      'bottom-left': [0, Math.max(0, dims.height - ch)],
+      'bottom-right': [Math.max(0, dims.width - cw), Math.max(0, dims.height - ch)],
+    };
+    const [cx, cy] = srcCorners[duoCorner] || srcCorners['bottom-right'];
+    const pos = {
+      'top-left': [mgn, mgn],
+      'top-right': [w - pw - mgn, mgn],
+      'bottom-left': [mgn, h - ph - mgn],
+      'bottom-right': [w - pw - mgn, h - ph - mgn],
+    }[duoCorner] || [w - pw - mgn, h - ph - mgn];
+    return `[0:v]split[c][p];[c]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}[content];[p]crop=${cw}:${ch}:${cx}:${cy},scale=${pw}:${ph},drawbox=x=0:y=0:w=${pw}:h=${ph}:color=white:thickness=3[pip];[content][pip]overlay=${pos[0]}:${pos[1]}`;
+  })() || (clip.layout === 'spotlight'
     ? `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`
     : clip.layout === 'split'
       ? `[0:v]split[a][b];[a]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=increase,crop=${w}:${Math.floor(h / 2)}[top];[b]scale=${w}:${Math.floor(h / 2)}:force_original_aspect_ratio=decrease,pad=${w}:${Math.floor(h / 2)}:(ow-iw)/2:(oh-ih)/2[bot];[top][bot]vstack`
-      : `[0:v]split[a][b];[a]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},gblur=sigma=20[bg];[b]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`;
+      : `[0:v]split[a][b];[a]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},gblur=sigma=20[bg];[b]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2`);
   fc = base + `[v0];[v0]${sub}[v1]`;
   // Logo is used on the main video and, when enabled, on the title/end
   // cards too — split into exactly as many copies as are actually used
@@ -557,7 +653,7 @@ async function finishRender(srcPath, project, clip, recipe) {
   if (ff.code !== 0 || !fs.existsSync(outPath)) {
     throw new Error('ffmpeg failed to build the clip.' + (ff.err ? ' ' + ff.err.slice(-300) : ''));
   }
-  return { file: outFile, timed: isTimed, template: templateId, unique: uq };
+  return { file: outFile, timed: isTimed, template: templateId, unique: uq, ratio: clip.ratio || '9:16', duo_corner: duoCorner };
 }
 
 async function renderClipJob(project, clip) {
@@ -636,9 +732,16 @@ app.post('/api/projects', async (req, res) => {
       return res.json({ project: db.prepare('SELECT * FROM projects WHERE id=?').get(r.lastInsertRowid), note: 'The video itself stays on your device — this project stores its name, size and length only.' });
     }
     const link = url || '';
-    if (!youtubeId(link)) return res.status(400).json({ error: 'Paste a YouTube link (watch, youtu.be, live or Shorts).' });
-    const r = db.prepare(`INSERT INTO projects (title, channel, source_url, source_type, youtube_id, transcript_status, fetch_status)
-      VALUES ('Loading…','YouTube',?,'youtube',?,'pending','fetching')`).run(link, youtubeId(link));
+    // YouTube stays primary; Twitch video/clip and Kick video links also work
+    // (yt-dlp already supports them). Twitch VODs usually have no captions,
+    // so the fetch honestly falls back to "needs_paste".
+    const ytId = youtubeId(link), twId = twitchId(link), kId = kickId(link);
+    if (!ytId && !twId && !kId) return res.status(400).json({ error: 'Paste a YouTube, Twitch or Kick video link (watch, youtu.be, live, Shorts, twitch.tv/videos, twitch clip, kick.com/video).' });
+    const srcType = ytId ? 'youtube' : twId ? 'twitch' : 'kick';
+    const srcId = ytId || twId || kId;
+    const srcLabel = srcType === 'youtube' ? 'YouTube' : srcType === 'twitch' ? 'Twitch' : 'Kick';
+    const r = db.prepare(`INSERT INTO projects (title, channel, source_url, source_type, youtube_id, source_id, transcript_status, fetch_status)
+      VALUES ('Loading…',?,?,?, ?, ?, 'pending','fetching')`).run(srcLabel, link, srcType, ytId || null, srcId);
     const id = r.lastInsertRowid;
     // Auto-fetch in the background: metadata + captions + traffic + live status,
     // no paste needed.
@@ -705,14 +808,18 @@ app.post('/api/projects/:id/find-clips', async (req, res) => {
     // Clip count: the user chooses any number (1, 2, 5, 10, …). No fixed
     // small limit — capped at 50 only to keep one request sane.
     const wanted = Math.max(1, Math.min(50, parseInt(req.body?.count || 5, 10) || 5));
-    const { engine, note, clips } = await scoreClips(p, wanted);
+    // Clip length range (PeakCut first-test standard: 15–45s). Clamped so the
+    // range is always sane: min 5–120s, max min–180s.
+    const minLen = Math.max(5, Math.min(120, parseInt(req.body?.min_sec ?? req.body?.minSec ?? 15, 10) || 15));
+    const maxLen = Math.max(minLen, Math.min(180, parseInt(req.body?.max_sec ?? req.body?.maxSec ?? 45, 10) || 45));
+    const { engine, note, clips } = await scoreClips(p, wanted, minLen, maxLen);
     const ins = db.prepare(`INSERT INTO clips (project_id, start_sec, end_sec, score, hook, captions_json, hashtags) VALUES (?,?,?,?,?,?,?)`);
     const created = [];
     for (const c of clips) {
       const r = ins.run(p.id, c.start_sec, c.end_sec, c.score || 60, c.hook || '', JSON.stringify(c.captions || []), (c.hashtags || []).join(' '));
       created.push(db.prepare('SELECT * FROM clips WHERE id=?').get(r.lastInsertRowid));
     }
-    res.json({ engine, note: note || null, requested: wanted, found: created.length, created });
+    res.json({ engine, note: note || null, requested: wanted, found: created.length, min_sec: minLen, max_sec: maxLen, created });
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 
@@ -741,6 +848,23 @@ app.patch('/api/projects/:id/clips/:clipId', (req, res) => {
   }
   if (req.body?.caption_template !== undefined) {
     sets.push('caption_template=?'); vals.push(getTemplate(req.body.caption_template).id);
+  }
+  if (req.body?.checklist !== undefined) {
+    // Pre-post checklist: {hook, ending, captions, face} booleans. Ticking
+    // never blocks anything — it is only a checklist.
+    const cl = req.body.checklist || {};
+    const clean = {
+      hook: !!cl.hook, ending: !!cl.ending, captions: !!cl.captions, face: !!cl.face,
+    };
+    sets.push('checklist_json=?'); vals.push(JSON.stringify(clean));
+  }
+  if (req.body?.ratio !== undefined) {
+    const ok = ['9:16', '1:1', '4:5', '16:9'].includes(String(req.body.ratio)) ? String(req.body.ratio) : '9:16';
+    sets.push('ratio=?'); vals.push(ok);
+  }
+  if (req.body?.duo_corner !== undefined) {
+    const ok = ['auto', 'top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(String(req.body.duo_corner)) ? String(req.body.duo_corner) : 'auto';
+    sets.push('duo_corner=?'); vals.push(ok);
   }
   if (!sets.length) return res.json({ clip: c });
   db.prepare(`UPDATE clips SET ${sets.join(',')} WHERE id=?`).run(...vals, c.id);
@@ -776,8 +900,8 @@ app.post('/api/projects/:id/clips/:clipId/render', async (req, res) => {
   const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
   const c = db.prepare('SELECT * FROM clips WHERE id=? AND project_id=?').get(req.params.clipId, req.params.id);
   if (!p || !c) return res.status(404).json({ error: 'Project or clip not found.' });
-  if (p.source_type !== 'youtube')
-    return res.status(400).json({ error: 'Auto-cut works from YouTube only — Drive and uploaded videos preview in their own app instead.' });
+  if (p.source_type !== 'youtube' && p.source_type !== 'twitch' && p.source_type !== 'kick')
+    return res.status(400).json({ error: 'Auto-cut works from YouTube, Twitch and Kick links only — Drive and uploaded videos preview in their own app instead.' });
   if (c.render_status === 'rendering') return res.json({ clip: c, note: 'Already cutting.' });
   db.prepare(`UPDATE clips SET render_status='rendering', render_error=NULL WHERE id=?`).run(c.id);
   renderClipJob(p, c).then((info) => {
@@ -832,6 +956,7 @@ app.post('/api/projects/:id/live-clip', async (req, res) => {
 const DEFAULT_RECIPE = {
   recipe: 'Clip long video', brandKit: 'No brand kit',
   clipping: true, aiPicks: 'Auto', clipLength: 'auto',
+  aiEngine: 'heuristic', // Settings → AI: 'heuristic' (built-in, always ready) or 'gemini'
   captions: true, captionStyle: 'Word Cut', captionTemplate: 'word-cut',
   autoHook: true, hookTemplate: 'Classic',
   motionGraphics: false, aiEmojis: false, autoBroll: false,
@@ -847,6 +972,50 @@ app.get('/api/recipe', (req, res) => {
   const row = db.prepare('SELECT settings_json FROM recipe WHERE id=1').get();
   const saved = row ? JSON.parse(row.settings_json) : {};
   res.json({ settings: { ...DEFAULT_RECIPE, ...saved } });
+});
+
+// ---- Settings → AI: engine choice + an honest test ----
+// The engine choice is stored in the recipe settings. The test never fakes
+// a ready state: heuristic is always ready; Gemini reports plainly when no
+// key is set, and does a real tiny call when one is.
+app.get('/api/ai-settings', (req, res) => {
+  const s = recipeSettings();
+  const engine = s.aiEngine === 'gemini' ? 'gemini' : 'heuristic';
+  res.json({
+    engine,
+    model: engine === 'gemini' ? 'gemini-2.0-flash' : 'built-in heuristic',
+    gemini_key_set: !!process.env.GEMINI_API_KEY,
+  });
+});
+app.post('/api/ai-settings', (req, res) => {
+  const engine = req.body?.engine === 'gemini' ? 'gemini' : 'heuristic';
+  const s = recipeSettings();
+  s.aiEngine = engine;
+  db.prepare(`INSERT INTO recipe (id, settings_json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET settings_json=excluded.settings_json`)
+    .run(JSON.stringify(s));
+  res.json({ ok: true, engine, model: engine === 'gemini' ? 'gemini-2.0-flash' : 'built-in heuristic', gemini_key_set: !!process.env.GEMINI_API_KEY });
+});
+app.get('/api/ai-settings/test', async (req, res) => {
+  const s = recipeSettings();
+  const engine = s.aiEngine === 'gemini' ? 'gemini' : 'heuristic';
+  if (engine === 'heuristic') {
+    return res.json({ ready: true, engine, model: 'built-in heuristic', message: 'Built-in heuristic is ready — no key needed. It scores moments from the transcript by hooks, numbers and questions.' });
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    return res.json({ ready: false, engine, model: 'gemini-2.0-flash', message: 'No GEMINI_API_KEY is set on the server — Gemini is not available. The built-in heuristic is being used instead.' });
+  }
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + encodeURIComponent(process.env.GEMINI_API_KEY),
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with exactly: OK' }] }] }), signal: ctrl.signal });
+    clearTimeout(t);
+    if (!r.ok) return res.json({ ready: false, engine, model: 'gemini-2.0-flash', message: 'Gemini key is set but the test call failed (HTTP ' + r.status + ') — the built-in heuristic is being used instead.' });
+    return res.json({ ready: true, engine, model: 'gemini-2.0-flash', message: 'Gemini is ready — the test call answered OK.' });
+  } catch (e) {
+    return res.json({ ready: false, engine, model: 'gemini-2.0-flash', message: 'Gemini test call failed (' + String(e.message || e).slice(0, 120) + ') — the built-in heuristic is being used instead.' });
+  }
 });
 app.post('/api/recipe', (req, res) => {
   db.prepare(`INSERT INTO recipe (id, settings_json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET settings_json=excluded.settings_json`)
@@ -901,6 +1070,9 @@ app.get('/api/projects/:id/pack', (req, res) => {
       translated_lang: c.translated_lang || null,
       caption_template: c.caption_template || 'word-cut',
       caption_offset: +(c.caption_offset || 0),
+      ratio: c.ratio || '9:16',
+      duo_corner: c.duo_corner || 'auto',
+      checklist: c.checklist_json ? JSON.parse(c.checklist_json) : null,
       timed_captions: c.captions_timed_json ? JSON.parse(c.captions_timed_json) : null,
       live_clip: !!c.live_clip,
     })),
